@@ -295,7 +295,7 @@ all_uploaded_files = {
     "Open-Measure CSV": uploaded_openmeasure
 }
 
-# --- Data Loading Logic ---
+# --- Data Loading Logic with Debugging ---
 if any(all_uploaded_files.values()):
     all_dfs = []
     with st.spinner("⏳ Processing uploaded files..."):
@@ -316,16 +316,27 @@ if any(all_uploaded_files.values()):
 
 else:
     st.info("No files uploaded. Loading default sample data from GitHub.")
+    
+    st.write("⏳ **Attempting to fetch default data from GitHub...**")
+    print("⏳ Attempting to fetch default data from GitHub...")
+    
     all_dfs = []
     with st.spinner("⏳ Fetching and combining default data..."):
         for phrase, url in PHRASE_DATA_SOURCES.items():
+            st.write(f"  ➡️ **Fetching data for:** '{phrase}' from URL: {url}")
+            print(f"  ➡️ Fetching data for: '{phrase}' from URL: {url}")
             try:
                 df_temp = pd.read_csv(url, low_memory=False)
                 all_dfs.append(df_temp)
                 st.sidebar.write(f"✅ Loaded data for: '{phrase}'")
+                st.write(f"  ✅ **Successfully loaded data for:** '{phrase}'")
             except Exception as e:
                 st.warning(f"⚠️ Could not load data for '{phrase}' from URL. Skipping. Error: {e}")
-
+                st.write(f"  ❌ **Failed to load data for:** '{phrase}'")
+    
+    st.write("✅ **Finished fetching all default data.**")
+    print("✅ Finished fetching all default data.")
+    
     if all_dfs:
         df_raw = pd.concat(all_dfs, ignore_index=True)
         core_df, other_df = final_preprocess_and_map_columns(df_raw)
@@ -503,26 +514,35 @@ with tab2:
                 node_text.append(hover_text)
                 cluster_id = cluster_map.get(node)
                 node_color.append(cluster_id if cluster_id not in [-1, -2] else -1)
-            nodes_df = pd.DataFrame({'x': node_x, 'y': node_y, 'text': node_text, 'color': node_color, 'size': [G.degree(node) for node in G.nodes()]})
-            fig_net.add_trace(go.Scatter(x=nodes_df['x'], y=nodes_df['y'], mode='markers', hoverinfo='text', text=nodes_df['text'],
-                                         marker=dict(showscale=False, colorscale='Viridis', size=nodes_df['size'] * 1.5 + 5, color=nodes_df['color'], line_width=2, opacity=0.8)))
-            fig_net.update_layout(title='Network of Coordinated Accounts', showlegend=False, hovermode='closest', margin=dict(b=20, l=5, r=5, t=40),
-                                   xaxis=dict(showgrid=False, zeroline=False, showticklabels=False), yaxis=dict(showgrid=False, zeroline=False, showticklabels=False), height=700)
+            fig_net.add_trace(go.Scatter(x=node_x, y=node_y, mode='markers', hoverinfo='text', text=node_text, marker=dict(size=10, color=node_color, colorscale='Viridis', showscale=True, cmin=-1), line_width=2))
+            fig_net.update_layout(title='Network Graph of Coordinated Accounts', showlegend=False, hovermode='closest', margin=dict(b=20,l=5,r=5,t=40), xaxis=dict(showgrid=False, zeroline=False, showticklabels=False), yaxis=dict(showgrid=False, zeroline=False, showticklabels=False))
             st.plotly_chart(fig_net, use_container_width=True)
 
 # ==================== TAB 3: Fundraising & Risk ====================
 with tab3:
-    st.subheader("Fundraising Campaign Integrity")
-    st.markdown("This section automatically identifies fundraising campaigns based on links found in your data. It assesses their risk based on CIB network analysis.")
+    st.subheader("Fundraising Campaign Analysis")
+    st.markdown("This tab identifies and analyzes fundraising campaigns mentioned in the posts, flagging those that may exhibit coordinated behavior.")
     if not df_for_analysis.empty:
-        with st.spinner("🔗 Identifying and assessing fundraising campaigns..."):
+        if coordinated_groups_df.empty:
+            st.warning("Please run the CIB analysis in the previous tab first to identify coordinated groups.")
+            fundraising_campaigns_df = cached_find_fundraising_campaigns(df_for_analysis, pd.DataFrame())
+        else:
             fundraising_campaigns_df = cached_find_fundraising_campaigns(df_for_analysis, coordinated_groups_df)
+        
         if not fundraising_campaigns_df.empty:
-            st.info(f"✅ Found {len(fundraising_campaigns_df)} potential fundraising campaigns.")
-            st.dataframe(fundraising_campaigns_df)
-            st.markdown("""
-            **How to interpret this table:**
-            - **Coordination_Score:** A higher score indicates the campaign link is being shared by accounts that are also part of a detected CIB network.
-            - **Risk_Flag:** `High` flags campaigns pushed by a coordinated network. `Low` suggests organic virality. `Needs Review` flags smaller groups that might warrant closer inspection.
-            """)
-        else: st.warning("No fundraising links were detected in the provided data. Please ensure your data contains links to common fundraising platforms like GoFundMe or PayPal.")
+            st.write(f"Found **{len(fundraising_campaigns_df)}** potential fundraising campaigns.")
+            
+            risk_fig = px.bar(fundraising_campaigns_df, x='Fundraising Link', y='Num_Posts', color='Risk_Flag',
+                              title="Fundraising Campaigns by Number of Posts and Risk Flag",
+                              labels={'Num_Posts': 'Number of Posts', 'Fundraising Link': 'Campaign Link', 'Risk_Flag': 'Risk'},
+                              color_discrete_map={'Low': 'green', 'Needs Review': 'orange', 'High': 'red'})
+            st.plotly_chart(risk_fig, use_container_width=True)
+            
+            st.markdown("---")
+            st.write("### 🚨 Detailed Fundraising Campaign Risk Table")
+            st.markdown("Sort by `Coordination_Score` to identify potentially high-risk campaigns.")
+            st.dataframe(fundraising_campaigns_df.sort_values(by='Coordination_Score', ascending=False), use_container_width=True)
+        else:
+            st.warning("No fundraising links were found in the dataset.")
+    else:
+        st.info("Please upload your CSV file(s) or use the default data.")
