@@ -20,18 +20,18 @@ st.title("🕊️ Humanitarian Campaign Monitoring Dashboard")
 
 # --- Define the 6 key phrases to track ---
 PHRASES_TO_TRACK = [
-    "leave a dot", "just a dot", "let's all leave a dot", "show your support with a dot", "a dot for gaza", "one dot for humanity"
+    "If you're scrolling, PLEASE leave a dot", "I'm so hungry, I'm not ashamed to say that", "3 replies — even dots — can break the algorithm", "My body is slowly falling apart from malnutrition, dizziness, and weight loss", "Good bye. If we die, don't forget us", "If you see this reply with a dot"
 ]
 
 # --- GitHub URLs for default data ---
 # Replace these with your actual GitHub raw URLs for each phrase
 PHRASE_DATA_SOURCES = {
-    "leave a dot": "https://raw.githubusercontent.com/your-repo/main/data/leave_a_dot.csv",
-    "just a dot": "https://raw.githubusercontent.com/your-repo/main/data/just_a_dot.csv",
-    "let's all leave a dot": "https://raw.githubusercontent.com/your-repo/main/data/lets_all_leave_a_dot.csv",
-    "show your support with a dot": "https://raw.githubusercontent.com/your-repo/main/data/show_your_support_with_a_dot.csv",
-    "a dot for gaza": "https://raw.githubusercontent.com/your-repo/main/data/a_dot_for_gaza.csv",
-    "one dot for humanity": "https://raw.githubusercontent.com/your-repo/main/data/one_dot_for_humanity.csv"
+    "phrase1": "https://raw.githubusercontent.com/your-repo/main/data/leave_a_dot.csv",
+    "phrase2": "https://raw.githubusercontent.com/your-repo/main/data/just_a_dot.csv",
+    "phrase3": "https://raw.githubusercontent.com/your-repo/main/data/lets_all_leave_a_dot.csv",
+    "phrase4": "https://raw.githubusercontent.com/your-repo/main/data/show_your_support_with_a_dot.csv",
+    "phrase5": "https://raw.githubusercontent.com/your-repo/main/data/a_dot_for_gaza.csv",
+    "phrase6": "https://raw.githubusercontent.com/your-repo/main/data/one_dot_for_humanity.csv"
 }
 
 # --- Helper Functions ---
