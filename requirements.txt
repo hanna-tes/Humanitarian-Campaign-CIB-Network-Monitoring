@@ -1,6 +1,6 @@
 streamlit==1.32.0
 pandas==2.2.0
-numpy==1.26.0
+numpy==1.24.4
 plotly==5.15.0
 scikit-learn==1.4.0
 networkx==3.3
