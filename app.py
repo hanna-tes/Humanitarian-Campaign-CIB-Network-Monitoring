@@ -15,16 +15,24 @@ from collections import Counter
 import tldextract
 
 # --- Set Page Config ---
-st.set_page_config(page_title="Humanitarian Campaign CIB Network Monitoring", layout="wide")
+st.set_page_config(page_title="Humanitarian Campaign Monitor", layout="wide")
 st.title("🕊️ Humanitarian Campaign Monitoring Dashboard")
 
 # --- Define the 6 key phrases to track ---
 PHRASES_TO_TRACK = [
-    "If you're scrolling, PLEASE leave a dot", "I'm so hungry, I'm not ashamed to say that", "3 replies — even dots — can break the algorithm", "My body is slowly falling apart from malnutrition, dizziness, and weight loss", "Good bye. If we die, don't forget us", "If you see this reply with a dot"
+    "leave a dot", "just a dot", "let's all leave a dot", "show your support with a dot", "a dot for gaza", "one dot for humanity"
 ]
 
-# --- GitHub URL for default data ---
-GITHUB_DEFAULT_DATA_URL = "https://raw.githubusercontent.com/your-username/your-repo/main/data/default_data.csv"
+# --- GitHub URLs for default data ---
+# Replace these with your actual GitHub raw URLs for each phrase
+PHRASE_DATA_SOURCES = {
+    "leave a dot": "https://raw.githubusercontent.com/your-repo/main/data/leave_a_dot.csv",
+    "just a dot": "https://raw.githubusercontent.com/your-repo/main/data/just_a_dot.csv",
+    "let's all leave a dot": "https://raw.githubusercontent.com/your-repo/main/data/lets_all_leave_a_dot.csv",
+    "show your support with a dot": "https://raw.githubusercontent.com/your-repo/main/data/show_your_support_with_a_dot.csv",
+    "a dot for gaza": "https://raw.githubusercontent.com/your-repo/main/data/a_dot_for_gaza.csv",
+    "one dot for humanity": "https://raw.githubusercontent.com/your-repo/main/data/one_dot_for_humanity.csv"
+}
 
 # --- Helper Functions ---
 def infer_platform_from_url(url):
@@ -73,6 +81,7 @@ def extract_all_urls(text):
     if pd.isna(text) or not isinstance(text, str): return []
     return re.findall(r'https?://\S+', text)
 
+@st.cache_data
 def final_preprocess_and_map_columns(df):
     df_processed = df.copy()
     if df_processed.empty:
@@ -252,32 +261,82 @@ def cached_network_graph(_df_for_graph): return build_user_interaction_graph(_df
 @st.cache_data(show_spinner="🔗 Identifying fundraising campaigns...")
 def cached_find_fundraising_campaigns(df, coordinated_groups_df): return find_fundraising_campaigns(df, coordinated_groups_df)
 
+# --- File Handling Functions ---
+def read_uploaded_file_with_encoding_detection(uploaded_file, file_name):
+    if not uploaded_file:
+        return pd.DataFrame()
+    
+    bytes_data = uploaded_file.getvalue()
+    encodings = ['utf-8-sig', 'utf-16', 'utf-16le', 'utf-16be', 'latin-1', 'cp1252']
+    
+    for enc in encodings:
+        try:
+            df = pd.read_csv(BytesIO(bytes_data), encoding=enc, low_memory=False)
+            st.sidebar.info(f"✅ {file_name}: Decoded using '{enc}'")
+            return df
+        except UnicodeDecodeError:
+            continue
+    st.error(f"❌ Failed to decode '{file_name}' with any of the supported encodings. Please check the file.")
+    return pd.DataFrame()
+
 # --- Main Dashboard Logic ---
 st.sidebar.header("📥 Upload Your Data")
-uploaded_file = st.sidebar.file_uploader("Upload CSV File", type=["csv"], help="Upload a single CSV file containing your campaign data. It should have columns for 'account_id', 'object_id' (the text content), 'timestamp_share', and 'URL'.")
+st.sidebar.info("Upload your CSV files below. All uploaded files will be combined.")
+uploaded_meltwater = st.sidebar.file_uploader("Upload Meltwater CSV", type=["csv"], key="meltwater_upload")
+uploaded_civicsignals = st.sidebar.file_uploader("Upload CivicSignals CSV", type=["csv"], key="civicsignals_upload")
+uploaded_openmeasure = st.sidebar.file_uploader("Upload Open-Measure CSV", type=["csv"], key="openmeasure_upload")
 
 df_raw = pd.DataFrame()
 core_df, other_df = pd.DataFrame(), pd.DataFrame()
 
-if uploaded_file:
-    with st.spinner("⏳ Loading and preprocessing uploaded data..."):
-        try:
-            df_raw = pd.read_csv(uploaded_file, low_memory=False)
-            core_df, other_df = final_preprocess_and_map_columns(df_raw)
-            if core_df.empty: st.error("❌ The uploaded file is empty or missing required columns after preprocessing, or no posts with the specified phrases were found.")
-            else: st.sidebar.success(f"✅ Loaded {len(core_df)} posts for analysis.")
-        except Exception as e:
-            st.error(f"❌ An error occurred while processing the file: {e}")
-else:
-    st.info("No file uploaded. Loading default sample data.")
-    try:
-        # Attempt to read default data from GitHub
-        df_raw = pd.read_csv(GITHUB_DEFAULT_DATA_URL, low_memory=False)
+all_uploaded_files = {
+    "Meltwater CSV": uploaded_meltwater,
+    "CivicSignals CSV": uploaded_civicsignals,
+    "Open-Measure CSV": uploaded_openmeasure
+}
+
+# --- Data Loading Logic ---
+if any(all_uploaded_files.values()):
+    all_dfs = []
+    with st.spinner("⏳ Processing uploaded files..."):
+        for file_name, file_uploader in all_uploaded_files.items():
+            df_temp = read_uploaded_file_with_encoding_detection(file_uploader, file_name)
+            if not df_temp.empty:
+                all_dfs.append(df_temp)
+    
+    if all_dfs:
+        df_raw = pd.concat(all_dfs, ignore_index=True)
         core_df, other_df = final_preprocess_and_map_columns(df_raw)
-        st.sidebar.info(f"✅ Loaded {len(core_df)} posts from GitHub default data.")
-    except Exception as e:
-        st.warning(f"⚠️ Could not load data from GitHub URL. Generating a dummy dataset instead. Error: {e}")
-        # Generate a dummy dataset for demonstration fallback
+        if core_df.empty:
+            st.error("❌ The combined data is empty or missing required columns after preprocessing, or no posts with the specified phrases were found.")
+        else:
+            st.sidebar.success(f"✅ Combined and loaded {len(core_df)} posts for analysis.")
+    else:
+        st.error("❌ No valid data could be loaded from the uploaded files.")
+
+else:
+    st.info("No files uploaded. Loading default sample data from GitHub.")
+    all_dfs = []
+    with st.spinner("⏳ Fetching and combining default data..."):
+        for phrase, url in PHRASE_DATA_SOURCES.items():
+            try:
+                df_temp = pd.read_csv(url, low_memory=False)
+                all_dfs.append(df_temp)
+                st.sidebar.write(f"✅ Loaded data for: '{phrase}'")
+            except Exception as e:
+                st.warning(f"⚠️ Could not load data for '{phrase}' from URL. Skipping. Error: {e}")
+
+    if all_dfs:
+        df_raw = pd.concat(all_dfs, ignore_index=True)
+        core_df, other_df = final_preprocess_and_map_columns(df_raw)
+        if core_df.empty:
+            st.error("❌ No posts with the specified phrases were found in the default data.")
+        else:
+            st.sidebar.success(f"✅ All default data loaded successfully. Total posts: {len(core_df):,}")
+    else:
+        st.error("❌ No data could be loaded from the specified URLs. Please upload a file or check the URLs.")
+        # Fallback to dummy data if both upload and default URL fail
+        st.warning("Generating a dummy dataset for demonstration fallback.")
         data_points = 5000
         start_date = pd.Timestamp('2025-06-01', tz='UTC')
         end_date = pd.Timestamp('2025-08-13', tz='UTC')
@@ -321,7 +380,7 @@ if not core_df.empty:
     
     analysis_mode = st.sidebar.radio("Analysis Mode", ("Text Mode", "URL Mode"))
 
-else: st.info("Please upload your CSV file or use the default data."); df_for_analysis = pd.DataFrame()
+else: st.info("Please upload your CSV file(s) or use the default data."); df_for_analysis = pd.DataFrame()
 
 # --- Tabs ---
 tab0, tab1, tab2, tab3 = st.tabs(["📝 Raw Data", "❤️ Campaign Pulse", "🕸️ CIB Network", "💰 Fundraising & Risk"])
