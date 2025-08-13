@@ -24,7 +24,7 @@ PHRASES_TO_TRACK = [
 ]
 
 # --- GitHub URLs for default data ---
-# Replace these with your actual GitHub raw URLs for each phrase
+# Make sure these URLs are correct and publicly accessible raw CSV files
 PHRASE_DATA_SOURCES = {
     "My body is slowly falling apart from malnutrition, dizziness, and weight loss": "https://raw.githubusercontent.com/hanna-tes/Humanitarian-Campaign-CIB-Network-Monitoring/refs/heads/main/My_body_is_slowly_falling_apart_from_malnutrition_%20-%20Aug%2013%2C%202025%20-%2012%2012%2054%20PM.csv",
     "I'm so hungry, I'm not ashamed to say that": "https://raw.githubusercontent.com/hanna-tes/Humanitarian-Campaign-CIB-Network-Monitoring/refs/heads/main/Im_so_hungry_Im_not_ashamed_to_say_that_AND_postTy%20-%20Aug%2013%2C%202025%20-%2010%2035%2027%20AM.csv",
@@ -244,11 +244,10 @@ def build_user_interaction_graph(df):
         clusters = df[df[influencer_column] == inf]['cluster'].dropna()
         G.nodes[inf]['cluster'] = clusters.mode()[0] if not clusters.empty else -2
     if G.nodes():
-        node_degrees = dict(G.degree()); sorted_nodes = sorted(node_degrees, key=node_degrees.get, reverse=True)
-        top_n_nodes = sorted_nodes[:st.session_state.get('max_nodes_to_display', 40)]
-        subgraph = G.subgraph(top_n_nodes); pos = nx.kamada_kawai_layout(subgraph)
-        cluster_map = {node: G.nodes[node].get('cluster', -2) for node in subgraph.nodes()}
-        return subgraph, pos, cluster_map
+        # Removed max_nodes_to_display logic from here as it's now handled by min_connections
+        pos = nx.kamada_kawai_layout(G) # Use full graph for layout
+        cluster_map = {node: G.nodes[node].get('cluster', -2) for node in G.nodes()}
+        return G, pos, cluster_map
     else: return G, {}, {}
 
 # --- Cached Functions ---
@@ -299,11 +298,21 @@ all_uploaded_files = {
 if any(all_uploaded_files.values()):
     all_dfs = []
     with st.spinner("⏳ Processing uploaded files..."):
+        st.write("⏳ **Attempting to process uploaded files...**")
+        print("⏳ Attempting to process uploaded files...")
         for file_name, file_uploader in all_uploaded_files.items():
+            st.write(f"  ➡️ **Processing file:** '{file_name}'")
+            print(f"  ➡️ Processing file: '{file_name}'")
             df_temp = read_uploaded_file_with_encoding_detection(file_uploader, file_name)
             if not df_temp.empty:
                 all_dfs.append(df_temp)
+                st.write(f"  ✅ **Successfully loaded data from:** '{file_name}'")
+            else:
+                st.write(f"  ❌ **Failed to load data from:** '{file_name}'")
     
+    st.write("✅ **Finished processing all uploaded files.**")
+    print("✅ Finished processing all uploaded files.")
+
     if all_dfs:
         df_raw = pd.concat(all_dfs, ignore_index=True)
         core_df, other_df = final_preprocess_and_map_columns(df_raw)
@@ -332,7 +341,7 @@ else:
                 st.write(f"  ✅ **Successfully loaded data for:** '{phrase}'")
             except Exception as e:
                 st.warning(f"⚠️ Could not load data for '{phrase}' from URL. Skipping. Error: {e}")
-                st.write(f"  ❌ **Failed to load data for:** '{phrase}'")
+                st.write(f"  ❌ **Failed to load data for:** '{phrase}' (Error: {e})")
     
     st.write("✅ **Finished fetching all default data.**")
     print("✅ Finished fetching all default data.")
@@ -496,53 +505,74 @@ with tab2:
                 st.markdown("---")
         else: st.warning("No coordinated content found above the selected threshold.")
         st.subheader("Network of Coordinated Accounts")
-        st.markdown("This graph shows accounts connected by their participation in a coordinated post group.")
-        st.session_state.max_nodes_to_display = st.slider("Max Nodes to Display", min_value=10, max_value=200, value=40, step=10, help="Limit to the most active accounts to improve graph readability.")
+        st.markdown("This graph shows accounts connected by their participation in a coordinated post group. Adjust the slider in the sidebar to filter by minimum connections.")
+        
+        # New slider for minimum connections
+        min_connections = st.sidebar.slider(
+            "Min connections for network graph",
+            min_value=1,
+            max_value=20,
+            value=3, # Default value
+            help="Only show accounts with at least this many connections (degree)."
+        )
+
         with st.spinner("🕸️ Building network graph..."):
             G, pos, cluster_map = cached_network_graph(clustered_df)
+        
         if not G.nodes():
             st.warning("Not enough coordinated activity to build a network graph.")
         else:
-            fig_net = go.Figure()
-            edge_x, edge_y = [], []
-            for edge in G.edges(): x0, y0 = pos[edge[0]]; x1, y1 = pos[edge[1]]; edge_x.extend([x0, x1, None]); edge_y.extend([y0, y1, None])
-            fig_net.add_trace(go.Scatter(x=edge_x, y=edge_y, line=dict(width=0.5, color='#888'), hoverinfo='none', mode='lines'))
-            node_x, node_y, node_text, node_color = [], [], [], []
-            for node in G.nodes():
-                x, y = pos[node]; node_x.append(x); node_y.append(y)
-                hover_text = f"User: {node}<br>Platform: {G.nodes[node].get('platform', 'N/A')}<br>Cluster: {cluster_map.get(node, 'N/A')}"
-                node_text.append(hover_text)
-                cluster_id = cluster_map.get(node)
-                node_color.append(cluster_id if cluster_id not in [-1, -2] else -1)
-            fig_net.add_trace(go.Scatter(x=node_x, y=node_y, mode='markers', hoverinfo='text', text=node_text, marker=dict(size=10, color=node_color, colorscale='Viridis', showscale=True, cmin=-1), line_width=2))
-            fig_net.update_layout(title='Network Graph of Coordinated Accounts', showlegend=False, hovermode='closest', margin=dict(b=20,l=5,r=5,t=40), xaxis=dict(showgrid=False, zeroline=False, showticklabels=False), yaxis=dict(showgrid=False, zeroline=False, showticklabels=False))
-            st.plotly_chart(fig_net, use_container_width=True)
+            # Filter the graph based on min_connections
+            nodes_to_remove = [
+                node for node in G.nodes()
+                if G.degree(node) < min_connections
+            ]
+            G_filtered = G.copy()
+            G_filtered.remove_nodes_from(nodes_to_remove)
+
+            if not G_filtered.nodes():
+                st.info(f"No accounts meet the minimum connection threshold of {min_connections}. Try lowering the threshold.")
+            else:
+                edge_x, edge_y = [], []
+                for edge in G_filtered.edges():
+                    x0, y0 = pos[edge[0]]
+                    x1, y1 = pos[edge[1]]
+                    edge_x.extend([x0, x1, None])
+                    edge_y.extend([y0, y1, None])
+                fig_net = go.Figure()
+                fig_net.add_trace(go.Scatter(x=edge_x, y=edge_y, line=dict(width=0.5, color='#888'), hoverinfo='none', mode='lines'))
+                
+                node_x, node_y, node_text, node_color = [], [], [], []
+                for node in G_filtered.nodes():
+                    x, y = pos[node] # Use original positions for filtered nodes
+                    node_x.append(x)
+                    node_y.append(y)
+                    hover_text = f"User: {node}<br>Platform: {G.nodes[node].get('platform', 'N/A')}<br>Cluster: {cluster_map.get(node, 'N/A')}<br>Connections: {G.degree(node)}"
+                    node_text.append(hover_text)
+                    cluster_id = cluster_map.get(node)
+                    node_color.append(cluster_id if cluster_id not in [-1, -2] else -1)
+
+                nodes_df = pd.DataFrame({'x': node_x, 'y': node_y, 'text': node_text, 'color': node_color, 'size': [G_filtered.degree(node) for node in G_filtered.nodes()]})
+                
+                fig_net.add_trace(go.Scatter(x=nodes_df['x'], y=nodes_df['y'], mode='markers', hoverinfo='text', text=nodes_df['text'],
+                                             marker=dict(showscale=False, colorscale='Viridis', size=nodes_df['size'] * 1.5 + 5, color=nodes_df['color'], line_width=2, opacity=0.8)))
+                fig_net.update_layout(title='Network of Coordinated Accounts', showlegend=False, hovermode='closest', margin=dict(b=20, l=5, r=5, t=40),
+                                       xaxis=dict(showgrid=False, zeroline=False, showticklabels=False), yaxis=dict(showgrid=False, zeroline=False, showticklabels=False), height=700)
+                st.plotly_chart(fig_net, use_container_width=True)
 
 # ==================== TAB 3: Fundraising & Risk ====================
 with tab3:
-    st.subheader("Fundraising Campaign Analysis")
-    st.markdown("This tab identifies and analyzes fundraising campaigns mentioned in the posts, flagging those that may exhibit coordinated behavior.")
+    st.subheader("Fundraising Campaign Integrity")
+    st.markdown("This section automatically identifies fundraising campaigns based on links found in your data. It assesses their risk based on CIB network analysis.")
     if not df_for_analysis.empty:
-        if coordinated_groups_df.empty:
-            st.warning("Please run the CIB analysis in the previous tab first to identify coordinated groups.")
-            fundraising_campaigns_df = cached_find_fundraising_campaigns(df_for_analysis, pd.DataFrame())
-        else:
+        with st.spinner("🔗 Identifying and assessing fundraising campaigns..."):
             fundraising_campaigns_df = cached_find_fundraising_campaigns(df_for_analysis, coordinated_groups_df)
-        
         if not fundraising_campaigns_df.empty:
-            st.write(f"Found **{len(fundraising_campaigns_df)}** potential fundraising campaigns.")
-            
-            risk_fig = px.bar(fundraising_campaigns_df, x='Fundraising Link', y='Num_Posts', color='Risk_Flag',
-                              title="Fundraising Campaigns by Number of Posts and Risk Flag",
-                              labels={'Num_Posts': 'Number of Posts', 'Fundraising Link': 'Campaign Link', 'Risk_Flag': 'Risk'},
-                              color_discrete_map={'Low': 'green', 'Needs Review': 'orange', 'High': 'red'})
-            st.plotly_chart(risk_fig, use_container_width=True)
-            
-            st.markdown("---")
-            st.write("### 🚨 Detailed Fundraising Campaign Risk Table")
-            st.markdown("Sort by `Coordination_Score` to identify potentially high-risk campaigns.")
-            st.dataframe(fundraising_campaigns_df.sort_values(by='Coordination_Score', ascending=False), use_container_width=True)
-        else:
-            st.warning("No fundraising links were found in the dataset.")
-    else:
-        st.info("Please upload your CSV file(s) or use the default data.")
+            st.info(f"✅ Found {len(fundraising_campaigns_df)} potential fundraising campaigns.")
+            st.dataframe(fundraising_campaigns_df)
+            st.markdown("""
+            **How to interpret this table:**
+            - **Coordination_Score:** A higher score indicates the campaign link is being shared by accounts that are also part of a detected CIB network.
+            - **Risk_Flag:** `High` flags campaigns pushed by a coordinated network. `Low` suggests organic virality. `Needs Review` flags smaller groups that might warrant closer inspection.
+            """)
+        else: st.warning("No fundraising links were detected in the provided data. Please ensure your data contains links to common fundraising platforms like GoFundMe or PayPal.")
