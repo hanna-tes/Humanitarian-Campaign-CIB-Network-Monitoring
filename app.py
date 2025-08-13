@@ -26,12 +26,12 @@ PHRASES_TO_TRACK = [
 # --- GitHub URLs for default data ---
 # Replace these with your actual GitHub raw URLs for each phrase
 PHRASE_DATA_SOURCES = {
-    "phrase1": "https://raw.githubusercontent.com/your-repo/main/data/leave_a_dot.csv",
-    "phrase2": "https://raw.githubusercontent.com/your-repo/main/data/just_a_dot.csv",
-    "phrase3": "https://raw.githubusercontent.com/your-repo/main/data/lets_all_leave_a_dot.csv",
-    "phrase4": "https://raw.githubusercontent.com/your-repo/main/data/show_your_support_with_a_dot.csv",
-    "phrase5": "https://raw.githubusercontent.com/your-repo/main/data/a_dot_for_gaza.csv",
-    "phrase6": "https://raw.githubusercontent.com/your-repo/main/data/one_dot_for_humanity.csv"
+    "phrase1": "https://raw.githubusercontent.com/hanna-tes/Humanitarian-Campaign-CIB-Network-Monitoring/refs/heads/main/My_body_is_slowly_falling_apart_from_malnutrition_%20-%20Aug%2013%2C%202025%20-%2012%2012%2054%20PM.csv",
+    "phrase2": "https://raw.githubusercontent.com/hanna-tes/Humanitarian-Campaign-CIB-Network-Monitoring/refs/heads/main/Im_so_hungry_Im_not_ashamed_to_say_that_AND_postTy%20-%20Aug%2013%2C%202025%20-%2010%2035%2027%20AM.csv",
+    "phrase3": "https://raw.githubusercontent.com/hanna-tes/Humanitarian-Campaign-CIB-Network-Monitoring/refs/heads/main/If_youre_scrolling_PLEASE_leave_a_dot_AND_postType%20-%20Aug%2013%2C%202025%20-%2010%2032%2047%20AM.csv",
+    "phrase4": "https://raw.githubusercontent.com/hanna-tes/Humanitarian-Campaign-CIB-Network-Monitoring/refs/heads/main/If_you_see_this_reply_with_a_dot_AND_postTypeog%20-%20Aug%2013%2C%202025%20-%2012%2014%2048%20PM.csv",
+    "phrase5": "https://raw.githubusercontent.com/hanna-tes/Humanitarian-Campaign-CIB-Network-Monitoring/refs/heads/main/Good_bye._If_we_die_dont_forget_us_AND_postTypeog%20-%20Aug%2013%2C%202025%20-%2012%2013%2056%20PM.csv",
+    "phrase6": "https://raw.githubusercontent.com/hanna-tes/Humanitarian-Campaign-CIB-Network-Monitoring/refs/heads/main/3_replies_%E2%80%94_even_dots_%E2%80%94_can_break_the_algorithm_AN%20-%20Aug%2013%2C%202025%20-%2010%2037%2011%20AM.csv"
 }
 
 # --- Helper Functions ---
