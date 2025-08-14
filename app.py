@@ -1,4 +1,4 @@
-# app.py
+ # app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -56,7 +56,6 @@ def infer_platform_from_url(url):
     else:
         return "Unknown"
 
-# NEW function to extract URLs from text
 def extract_urls_from_text(text):
     """Extracts all URLs from a given text string."""
     if pd.isna(text) or not isinstance(text, str):
@@ -64,7 +63,6 @@ def extract_urls_from_text(text):
     url_pattern = re.compile(r'https?://[^\s<>"]+|www\.[^\s<>"]+')
     return url_pattern.findall(text)
 
-# NEW function to extract only fundraising URLs
 def extract_fundraising_urls(text, keywords):
     """Extracts all URLs from a text and filters for fundraising keywords."""
     all_urls = extract_urls_from_text(text)
@@ -82,8 +80,6 @@ def extract_original_text(text):
     cleaned = re.sub(r'@\w+', '', cleaned).strip()
     cleaned = re.sub(r'http\S+|www\S+|https\S+', '', cleaned).strip()
     
-    # --- NEW: Remove dates, years, and common month names ---
-    # Matches patterns like "June 17", "17 June", "17/06/2025", "2025"
     cleaned = re.sub(r'\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\s+\d{1,2}\b', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'\b\d{1,2}\s+(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b', '', cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r'\b\d{1,2}/\d{1,2}/\d{2,4}\b', '', cleaned)
@@ -93,7 +89,6 @@ def extract_original_text(text):
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     return cleaned.lower()
 
-# --- Robust Timestamp Parser: Returns UNIX Timestamp (Integer) ---
 def parse_timestamp_robust(timestamp):
     """
     Converts a timestamp string to a UNIX timestamp (integer seconds since epoch).
@@ -107,7 +102,6 @@ def parse_timestamp_robust(timestamp):
         else:
             return None
 
-    # List of common timestamp formats
     date_formats = [
         '%Y-%m-%dT%H:%M:%S.%fZ', '%Y-%m-%dT%H:%M:%SZ',
         '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S',
@@ -117,7 +111,6 @@ def parse_timestamp_robust(timestamp):
         '%Y-%m-%d', '%m/%d/%Y', '%d %b %Y',
     ]
 
-    # Try direct parsing
     try:
         parsed = pd.to_datetime(timestamp, errors='coerce', utc=True)
         if pd.notna(parsed):
@@ -125,7 +118,6 @@ def parse_timestamp_robust(timestamp):
     except:
         pass
 
-    # Try each format
     for fmt in date_formats:
         try:
             parsed = pd.to_datetime(timestamp, format=fmt, errors='coerce', utc=True)
@@ -135,7 +127,6 @@ def parse_timestamp_robust(timestamp):
             continue
     return None
 
-# --- Combine Multiple Datasets with Flexible Object Column ---
 def combine_social_media_data(
     meltwater_dfs,
     civicsignals_df,
@@ -205,17 +196,15 @@ def combine_social_media_data(
     combined['original_url'] = combined['original_url'].astype(str).replace('nan', '').fillna('')
     combined['object_id'] = combined['object_id'].astype(str).replace('nan', '').fillna('')
 
-    # Convert timestamp to UNIX
     combined['timestamp_share'] = combined['timestamp_share'].apply(parse_timestamp_robust)
     combined = combined.dropna(subset=['timestamp_share']).reset_index(drop=True)
-    combined['timestamp_share'] = combined['timestamp_share'].astype('Int64')  # Nullable integer
+    combined['timestamp_share'] = combined['timestamp_share'].astype('Int64')
 
     combined['object_id'] = combined['object_id'].astype(str).replace('nan', '').fillna('')
     combined = combined[combined['object_id'].str.strip() != ""].copy()
     combined = combined.drop_duplicates(subset=['account_id', 'content_id', 'object_id', 'timestamp_share']).reset_index(drop=True)
     return combined
 
-# --- Final Preprocessing Function ---
 def final_preprocess_and_map_columns(df, coordination_mode="Text Content"):
     """
     Performs final preprocessing steps on the combined DataFrame.
@@ -224,7 +213,6 @@ def final_preprocess_and_map_columns(df, coordination_mode="Text Content"):
     """
     df_processed = df.copy()
 
-    # Create all required columns even if the dataframe is empty
     if df_processed.empty:
         df_processed['URL'] = pd.Series([], dtype='object')
         df_processed['Platform'] = pd.Series([], dtype='object')
@@ -239,7 +227,6 @@ def final_preprocess_and_map_columns(df, coordination_mode="Text Content"):
     # NEW: Extract fundraising URLs from text and put them in a dedicated column
     df_processed['fundraising_urls_in_text'] = df_processed['object_id'].apply(lambda x: extract_fundraising_urls(x, FUNDRAISING_KEYWORDS))
     
-    # We use a single, reliable URL for other analyses
     df_processed['URL'] = df_processed['original_url'].fillna(df_processed['fundraising_urls_in_text'].apply(lambda x: x[0] if x else None))
 
     df_processed['object_id'] = df_processed['object_id'].astype(str).replace('nan', '').fillna('')
@@ -251,12 +238,12 @@ def final_preprocess_and_map_columns(df, coordination_mode="Text Content"):
         text = re.sub(r'\s+', ' ', text).strip().lower()
         return text
 
+    # FIX: Correctly set original_text based on coordination_mode
     if coordination_mode == "Text Content":
         df_processed['original_text'] = df_processed['object_id'].apply(extract_original_text)
     elif coordination_mode == "Shared URLs":
-        # For URL-based analysis, we use the extracted URL itself as the text to cluster on
-        df_processed = df_processed[df_processed['URL'].notna()].copy()
-        df_processed['original_text'] = df_processed['URL'].astype(str).replace('nan', '').fillna('')
+        df_processed = df_processed[df_processed['URL'].notna() & (df_processed['URL'].str.strip() != "")].copy()
+        df_processed['original_text'] = df_processed['URL'].astype(str)
 
     df_processed = df_processed[df_processed['original_text'].str.strip() != ""].reset_index(drop=True)
     df_processed['Platform'] = df_processed['URL'].apply(infer_platform_from_url)
@@ -299,21 +286,16 @@ def cluster_texts(df, eps, min_samples, max_features):
     return df_copy
 
 def find_coordinated_groups(df, threshold, max_features):
-    """
-    Groups highly similar posts into coordination groups for better analysis.
-    Crucially, a group is only considered coordinated if it involves more than one unique account.
-    """
     text_col = 'original_text'
     social_media_platforms = {'TikTok', 'Facebook', 'X', 'YouTube', 'Instagram', 'Telegram'}
     
     coordination_groups = {}
     
-    # We now perform a simpler grouping for URLs
     if df['original_text'].nunique() > 1 and len(df) > 1:
         df_clustered = cluster_texts(df, eps=0.4, min_samples=2, max_features=max_features)
         clustered_groups = df_clustered[df_clustered['cluster'] != -1].groupby('cluster')
     else:
-        clustered_groups = df.groupby(pd.Series(range(len(df)))) # Treat each post as a single group if there's no clustering possible
+        clustered_groups = df.groupby(pd.Series(range(len(df))))
     
     for cluster_id, group in clustered_groups:
         if len(group) < 2:
@@ -323,7 +305,6 @@ def find_coordinated_groups(df, threshold, max_features):
         clean_df = clean_df.rename(columns={text_col: 'text', 'timestamp_share': 'Timestamp'})
         clean_df = clean_df.reset_index(drop=True)
         
-        # Build adjacency list
         adj = {i: [] for i in range(len(clean_df))}
         if len(clean_df) > 1:
             vectorizer = TfidfVectorizer(
@@ -397,7 +378,6 @@ def find_coordinated_groups(df, threshold, max_features):
         
     return final_groups
 
-
 def build_user_interaction_graph(df, coordination_type="text"):
     G = nx.Graph()
     influencer_column = 'account_id'
@@ -466,7 +446,6 @@ def build_user_interaction_graph(df, coordination_type="text"):
         return subgraph, pos, cluster_map
     else:
         return G, {}, {}
-
 
 # --- Cached Functions ---
 @st.cache_data(show_spinner="🔍 Finding coordinated posts within clusters...")
@@ -682,26 +661,22 @@ with tab1:
     st.markdown(f"**Coordination Mode:** `{coordination_mode}` | **Total Posts (All Time):** `{len(df):,}` | **Posts After Filters:** `{len(filtered_df_global):,}`")
 
     if not filtered_df_global.empty:
-        # Post Volume per Time
         st.markdown("### 📈 Post Volume Over Time")
         filtered_df_global['date_utc'] = pd.to_datetime(filtered_df_global['timestamp_share'], unit='s', utc=True)
         time_series_data = filtered_df_global.set_index('date_utc').resample('D').size().reset_index(name='post_count')
         fig_volume = px.line(time_series_data, x='date_utc', y='post_count', title='Posts per Day (UTC)')
         st.plotly_chart(fig_volume, use_container_width=True)
 
-        # Sample data
         st.markdown("### 📋 Raw Data Sample (First 10 Rows)")
         display_df = filtered_df_global.copy()
         display_df['date_utc'] = pd.to_datetime(display_df['timestamp_share'], unit='s', utc=True)
         st.dataframe(display_df[['account_id', 'content_id', 'object_id', 'date_utc']].head(10), use_container_width=True)
 
-        # Top Influencers
         st.markdown("---")
         top_influencers = filtered_df_global['account_id'].value_counts().head(10)
         fig_influencers = px.bar(top_influencers, title="Top 10 Influencers", labels={'value': 'Number of Posts', 'index': 'Account'})
         st.plotly_chart(fig_influencers, use_container_width=True)
 
-        # Emotional Phrases
         st.markdown("---")
         def contains_phrase(text):
             if pd.isna(text): return "Other"
@@ -711,10 +686,8 @@ with tab1:
                     return p
             return "Other"
 
-        # Apply the function to create a new column
         filtered_df_global['phrase_type'] = filtered_df_global['object_id'].apply(contains_phrase)
         
-        # Plotting the count of each phrase
         phrase_counts = filtered_df_global['phrase_type'].value_counts()
         fig_phrases = px.bar(
             phrase_counts.drop("Other", errors='ignore'),
@@ -730,7 +703,6 @@ with tab2:
     if df_for_analysis.empty:
         st.warning("No data available for analysis. Please adjust the filters or check your data source.")
     else:
-        # Analysis parameters
         col1, col2, col3 = st.columns(3)
         with col1:
             if coordination_mode == "Text Content":
@@ -764,7 +736,6 @@ with tab2:
                     total_coordinated_posts = sum(g['num_posts'] for g in coordinated_groups)
                     total_coordinated_accounts = sum(g['num_accounts'] for g in coordinated_groups)
                     
-                    # --- NEW: Visually appealing metrics ---
                     col_met1, col_met2, col_met3 = st.columns(3)
                     with col_met1:
                         st.metric("Coordinated Groups Found", len(coordinated_groups), help="Total number of unique coordinated groups identified.")
@@ -785,7 +756,6 @@ with tab2:
                                 group_df = pd.DataFrame(group['posts'])
                                 st.dataframe(group_df[['account_id', 'text', 'URL', 'Platform']].head(10), use_container_width=True)
                                 
-                                # Plot a timeline for this group
                                 group_df['Timestamp'] = pd.to_datetime(group_df['Timestamp'], unit='s', utc=True)
                                 group_df['Date'] = group_df['Timestamp'].dt.date
                                 timeline = group_df.groupby('Date').size().reset_index(name='count')
@@ -805,8 +775,8 @@ with tab3:
     if df_for_analysis.empty:
         st.warning("No data available for network analysis. Please adjust the filters or check your data source.")
     else:
-        # Network graph parameters
-        col1, col2 = st.columns(2)
+        st.markdown("#### ⚙️ Network Graph Parameters")
+        col1, col2, col3 = st.columns([1, 1, 2])
         with col1:
             network_mode = st.radio(
                 "Network Based On:",
@@ -819,102 +789,112 @@ with tab3:
                 min_value=10, max_value=200, value=40, step=10,
                 help="Limits the number of nodes (accounts) shown in the graph for performance."
             )
-
+        with col3:
+            # NEW: Filter network graph by phrase
+            phrase_to_filter = st.selectbox(
+                "Filter Network by Phrase",
+                options=["All"] + list(PHRASES_TO_TRACK),
+                help="Focus the network graph on a specific campaign narrative."
+            )
+        
         run_network = st.button("Generate Network Graph")
 
         if run_network:
             with st.spinner("⏳ Generating network graph..."):
-                if network_mode == "Similar Content":
-                    df_clustered_for_network = cached_clustering(df_for_analysis, eps=0.4, min_samples=3, max_features=5000)
-                    graph, pos, cluster_map = cached_network_graph(df_clustered_for_network, coordination_type="text", data_source="uploaded_data")
-                else: # Shared URLs
-                    graph, pos, cluster_map = cached_network_graph(df_for_analysis, coordination_type="url", data_source="uploaded_data")
-
-                if graph.number_of_nodes() > 0:
-                    edge_x = []
-                    edge_y = []
-                    for edge in graph.edges():
-                        x0, y0 = pos[edge[0]]
-                        x1, y1 = pos[edge[1]]
-                        edge_x.append(x0)
-                        edge_x.append(x1)
-                        edge_x.append(None)
-                        edge_y.append(y0)
-                        edge_y.append(y1)
-                        edge_y.append(None)
-
-                    edge_trace = go.Scatter(
-                        x=edge_x, y=edge_y,
-                        line=dict(width=0.5, color='#888'),
-                        hoverinfo='none',
-                        mode='lines'
-                    )
-
-                    node_x = []
-                    node_y = []
-                    for node in graph.nodes():
-                        x, y = pos[node]
-                        node_x.append(x)
-                        node_y.append(y)
-
-                    node_trace = go.Scatter(
-                        x=node_x, y=node_y,
-                        mode='markers',
-                        hoverinfo='text',
-                        marker=dict(
-                            showscale=True,
-                            colorscale='Viridis',
-                            reversescale=True,
-                            color=[],
-                            size=10,
-                            colorbar=dict(
-                                thickness=15,
-                                title='Node Centrality',
-                                xanchor='left',
-                                titleside='right'
-                            ),
-                            line_width=2
-                        )
-                    )
-
-                    node_adjacencies = []
-                    node_text = []
-                    for node, adjacencies in enumerate(graph.adjacency()):
-                        node_adjacencies.append(len(adjacencies[1]))
-                        node_text.append(f'Account: {list(graph.nodes())[node]}<br># of connections: {len(adjacencies[1])}')
-
-                    node_trace.marker.color = node_adjacencies
-                    node_trace.text = node_text
-
-                    fig = go.Figure(data=[edge_trace, node_trace],
-                                    layout=go.Layout(
-                                        title='<br>Network of Coordinated Accounts',
-                                        titlefont_size=16,
-                                        showlegend=False,
-                                        hovermode='closest',
-                                        margin=dict(b=20, l=5, r=5, t=40),
-                                        annotations=[dict(
-                                            showarrow=False,
-                                            text="Nodes represent accounts. Links show coordinated activity.",
-                                            xref="paper", yref="paper",
-                                            x=0.005, y=-0.002)],
-                                        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                                        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False))
-                                    )
-                    st.plotly_chart(fig, use_container_width=True)
+                # Apply phrase filter if selected
+                df_for_graph_filtered = df_for_analysis.copy()
+                if phrase_to_filter != "All":
+                    df_for_graph_filtered = df_for_graph_filtered[df_for_graph_filtered['object_id'].str.contains(phrase_to_filter, case=False, na=False)]
+                
+                if df_for_graph_filtered.empty:
+                    st.warning(f"No posts found for the selected phrase: '{phrase_to_filter}'. Please try a different filter.")
                 else:
-                    st.warning("The network graph could not be generated. There may not be enough coordinated activity to form a network.")
+                    if network_mode == "Similar Content":
+                        df_clustered_for_network = cached_clustering(df_for_graph_filtered, eps=0.4, min_samples=3, max_features=5000)
+                        graph, pos, cluster_map = cached_network_graph(df_clustered_for_network, coordination_type="text", data_source="uploaded_data")
+                    else: # Shared URLs
+                        graph, pos, cluster_map = cached_network_graph(df_for_graph_filtered, coordination_type="url", data_source="uploaded_data")
+
+                    if graph.number_of_nodes() > 0:
+                        edge_x = []
+                        edge_y = []
+                        for edge in graph.edges():
+                            x0, y0 = pos[edge[0]]
+                            x1, y1 = pos[edge[1]]
+                            edge_x.append(x0)
+                            edge_x.append(x1)
+                            edge_x.append(None)
+                            edge_y.append(y0)
+                            edge_y.append(y1)
+                            edge_y.append(None)
+
+                        edge_trace = go.Scatter(
+                            x=edge_x, y=edge_y,
+                            line=dict(width=0.5, color='#888'),
+                            hoverinfo='none',
+                            mode='lines'
+                        )
+
+                        node_x = []
+                        node_y = []
+                        for node in graph.nodes():
+                            x, y = pos[node]
+                            node_x.append(x)
+                            node_y.append(y)
+
+                        node_trace = go.Scatter(
+                            x=node_x, y=node_y,
+                            mode='markers',
+                            hoverinfo='text',
+                            marker=dict(
+                                showscale=True,
+                                colorscale='Viridis',
+                                reversescale=True,
+                                color=[],
+                                size=10,
+                                colorbar=dict(
+                                    thickness=15,
+                                    title='Node Centrality',
+                                    xanchor='left',
+                                    titleside='right'
+                                ),
+                                line_width=2
+                            )
+                        )
+
+                        node_adjacencies = []
+                        node_text = []
+                        for node, adjacencies in enumerate(graph.adjacency()):
+                            node_adjacencies.append(len(adjacencies[1]))
+                            node_text.append(f'Account: {list(graph.nodes())[node]}<br># of connections: {len(adjacencies[1])}')
+
+                        node_trace.marker.color = node_adjacencies
+                        node_trace.text = node_text
+
+                        fig = go.Figure(data=[edge_trace, node_trace],
+                                        layout=go.Layout(
+                                            title='<br>Network of Coordinated Accounts',
+                                            titlefont_size=16,
+                                            showlegend=False,
+                                            hovermode='closest',
+                                            margin=dict(b=20, l=5, r=5, t=40),
+                                            annotations=[dict(
+                                                showarrow=False,
+                                                text="Nodes represent accounts. Links show coordinated activity.",
+                                                xref="paper", yref="paper",
+                                                x=0.005, y=-0.002)],
+                                            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                                            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False))
+                                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.warning("The network graph could not be generated. There may not be enough coordinated activity to form a network.")
         st.markdown("---")
         st.subheader("💰 Suspicious Fundraising Analysis")
-        
-        # This part of the code needs to be run after a clustering/grouping analysis has been completed.
-        # It relies on the 'coordinated_groups' variable being populated.
-        # We'll use a check to ensure it exists before proceeding.
         
         if 'coordinated_groups' not in locals():
             st.info("Please run the 'Coordination Analysis' in the 'Analysis' tab first to identify coordinated posts.")
         else:
-            # We now iterate through the dedicated fundraising_urls_in_text column
             all_fundraising_urls = []
             for group in coordinated_groups:
                 for post in group['posts']:
