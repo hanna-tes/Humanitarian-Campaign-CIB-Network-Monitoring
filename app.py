@@ -862,7 +862,7 @@ with tab3:
                                     thickness=15,
                                     title='Node Centrality',
                                     xanchor='left',
-                                    # REMOVED: 'titleside' is not a valid property
+                                    # This property has been removed and is no longer causing the error
                                 ),
                                 line_width=2
                             )
@@ -879,8 +879,10 @@ with tab3:
 
                         fig = go.Figure(data=[edge_trace, node_trace],
                                         layout=go.Layout(
-                                            title='<br>Network of Coordinated Accounts',
-                                            titlefont_size=16,
+                                            title=dict( # Corrected: Use dict for title properties
+                                                text='<br>Network of Coordinated Accounts',
+                                                font_size=16
+                                            ),
                                             showlegend=False,
                                             hovermode='closest',
                                             margin=dict(b=20, l=5, r=5, t=40),
