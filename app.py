@@ -525,7 +525,7 @@ if data_source == "Use Default Datasets":
     with st.spinner("📥 Loading and combining default datasets..."):
         base_url = "https://raw.githubusercontent.com/hanna-tes/Humanitarian-Campaign-CIB-Network-Monitoring/refs/heads/main/"
         urls = {
-            "meltwater": f"{base_url}3_replies_%E2%80%94_even_dots_%E2%80%94_can_break_the_algorithm_AN%20-%20Aug%2013%2C%202025%20-%2010%2037%2011%20AM.csv"
+            "meltwater": f"{base_url}3_replies_%E2%80%94_even_dots_%E2%80%94_can_break_the_algorithm.csv"
             #"civicsignals": f"{base_url}togo-or-lome-or-togo-all-story-urls-20250707142808.csv"
         }
         meltwater_df = pd.DataFrame()
