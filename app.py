@@ -298,7 +298,7 @@ def cluster_texts(df, eps, min_samples, max_features):
     df_copy['cluster'] = clustering.labels_
     return df_copy
 
-def find_coordinated_groups(df, threshold, max_features):
+def find_coordinated_groups(df, threshold, max_features, time_window_minutes):
     text_col = 'original_text'
     social_media_platforms = {'TikTok', 'Facebook', 'X', 'YouTube', 'Instagram', 'Telegram'}
     
@@ -316,7 +316,7 @@ def find_coordinated_groups(df, threshold, max_features):
         
         clean_df = group[['account_id', 'timestamp_share', 'Platform', 'URL', text_col, 'fundraising_urls_in_text']].copy()
         clean_df = clean_df.rename(columns={text_col: 'text', 'timestamp_share': 'Timestamp'})
-        clean_df = clean_df.reset_index(drop=True)
+        clean_df = clean_df.sort_values('Timestamp').reset_index(drop=True)
         
         adj = {i: [] for i in range(len(clean_df))}
         if len(clean_df) > 1:
@@ -333,7 +333,9 @@ def find_coordinated_groups(df, threshold, max_features):
 
             for i in range(len(clean_df)):
                 for j in range(i + 1, len(clean_df)):
-                    if cosine_sim[i, j] >= threshold:
+                    # Check for both similarity and time window
+                    time_diff = abs(clean_df.loc[i, 'Timestamp'] - clean_df.loc[j, 'Timestamp']) / 60
+                    if cosine_sim[i, j] >= threshold and time_diff <= time_window_minutes:
                         adj[i].append(j)
                         adj[j].append(i)
                     
@@ -462,10 +464,10 @@ def build_user_interaction_graph(df, coordination_type="text"):
 
 # --- Cached Functions ---
 @st.cache_data(show_spinner="🔍 Finding coordinated posts within clusters...")
-def cached_find_coordinated_groups(_df, threshold, max_features, data_source="default"):
+def cached_find_coordinated_groups(_df, threshold, max_features, time_window_minutes, data_source="default"):
     if _df.empty:
         return []
-    return find_coordinated_groups(_df, threshold, max_features)
+    return find_coordinated_groups(_df, threshold, max_features, time_window_minutes)
 
 @st.cache_data(show_spinner="🧩 Clustering texts...")
 def cached_clustering(_df, eps, min_samples, max_features, data_source="default"):
@@ -666,7 +668,7 @@ else:
 
 
 # --- Tabs ---
-tab1, tab2, tab3 = st.tabs(["📊 Overview", "🔍 Analysis", "🌐 Network & Risk"])
+tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview", "🔍 Analysis", "🌐 Network Graph", "⚠️ Risk & Fundraising"])
 
 # ==================== TAB 1: Overview ====================
 with tab1:
@@ -741,6 +743,10 @@ with tab2:
         max_features = st.slider("Max TF-IDF Features", min_value=100, max_value=10000, value=5000, step=100,
                                  help="Limits the vocabulary size for text vectorization. Helps with performance and noise reduction.")
         
+        # NEW: Time-based coordination feature
+        time_window_minutes = st.slider("Max Time Difference for 'Strong' Coordination (Minutes)", min_value=1, max_value=120, value=10, step=1,
+                                        help="Only consider posts coordinated if they are published within this time window of each other.")
+        
         run_analysis = st.button("Run Coordination Analysis")
         
         if 'coordinated_groups' not in st.session_state:
@@ -751,7 +757,8 @@ with tab2:
                 df_clustered = cached_clustering(df_for_analysis, eps, min_samples, max_features, "uploaded_data")
                 
                 if df_clustered is not None and 'cluster' in df_clustered.columns:
-                    coordinated_groups = cached_find_coordinated_groups(df_clustered, threshold, max_features, "uploaded_data")
+                    # Pass the new time_window_minutes parameter
+                    coordinated_groups = cached_find_coordinated_groups(df_clustered, threshold, max_features, time_window_minutes, "uploaded_data")
                     st.session_state.coordinated_groups = coordinated_groups
 
                     st.markdown("### 📈 Coordination Summary")
@@ -789,12 +796,10 @@ with tab2:
                 else:
                     st.error("Clustering failed. Please check your data or parameters.")
 
-
-# ==================== TAB 3: Network & Risk ====================
+# ==================== TAB 3: Network Graph ====================
 with tab3:
-    st.subheader("🌐 Network & Risk Analysis")
+    st.subheader("🌐 Network Graph")
     
-    # NEW: Added explanation of the network graph
     st.markdown("""
         The network graph visualizes coordinated activity among accounts.
         - **Nodes** (circles) represent individual accounts.
@@ -811,19 +816,21 @@ with tab3:
             network_mode = st.radio(
                 "Network Based On:",
                 ("Similar Content", "Shared URLs"),
+                key="network_mode",
                 help="Build the network based on who posts similar content or who shares the same URLs."
             )
         with col2:
             st.session_state.max_nodes_to_display = st.slider(
                 "Max Nodes to Display",
                 min_value=10, max_value=200, value=40, step=10,
+                key="max_nodes",
                 help="Limits the number of nodes (accounts) shown in the graph for performance."
             )
         with col3:
-            # NEW: Filter network graph by phrase
             phrase_to_filter = st.selectbox(
                 "Filter Network by Phrase",
                 options=["All"] + list(PHRASES_TO_TRACK),
+                key="phrase_filter",
                 help="Focus the network graph on a specific campaign narrative."
             )
         
@@ -831,7 +838,6 @@ with tab3:
 
         if run_network:
             with st.spinner("⏳ Generating network graph..."):
-                # Apply phrase filter if selected
                 df_for_graph_filtered = df_for_analysis.copy()
                 if phrase_to_filter != "All":
                     df_for_graph_filtered = df_for_graph_filtered[df_for_graph_filtered['object_id'].str.contains(phrase_to_filter, case=False, na=False)]
@@ -924,107 +930,116 @@ with tab3:
                         st.plotly_chart(fig, use_container_width=True)
                     else:
                         st.warning("The network graph could not be generated. There may not be enough coordinated activity to form a network with the current filters.")
+
+
+# ==================== TAB 4: Risk & Fundraising ====================
+with tab4:
+    st.subheader("⚠️ Risk & Fundraising Analysis")
+
+    st.markdown("### 👤 Accounts Involved in Multiple Coordinated Campaigns")
+    st.markdown("""
+        This table identifies accounts that have participated in coordinated groups for more than one distinct campaign narrative (e.g., using different key phrases). These accounts may be of particular interest for further investigation.
+    """)
+    
+    def get_account_campaign_involvement(df_for_analysis):
+        account_campaigns = {}
+        for phrase in PHRASES_TO_TRACK:
+            posts_with_phrase = df_for_analysis[df_for_analysis['object_id'].str.contains(phrase, case=False, na=False)].copy()
+            
+            if not posts_with_phrase.empty:
+                df_clustered_phrase = cached_clustering(posts_with_phrase, eps=0.4, min_samples=2, max_features=5000)
+                coordinated_groups = cached_find_coordinated_groups(df_clustered_phrase, threshold=0.8, max_features=5000, time_window_minutes=60)
+                
+                if coordinated_groups:
+                    for group in coordinated_groups:
+                        for post in group['posts']:
+                            account_id = post['account_id']
+                            if account_id not in account_campaigns:
+                                account_campaigns[account_id] = set()
+                            account_campaigns[account_id].add(phrase)
         
-        st.markdown("---")
-        st.subheader("👤 Accounts Involved in Multiple Coordinated Campaigns")
+        multi_campaign_accounts = []
+        for account, phrases in account_campaigns.items():
+            if len(phrases) > 1:
+                multi_campaign_accounts.append({
+                    "Account": account,
+                    "Campaigns Involved": len(phrases),
+                    "Phrases Used": ', '.join(sorted(list(phrases)))
+                })
         
-        def get_account_campaign_involvement(df_for_analysis):
-            account_campaigns = {}
-            for phrase in PHRASES_TO_TRACK:
-                posts_with_phrase = df_for_analysis[df_for_analysis['object_id'].str.contains(phrase, case=False, na=False)].copy()
-                
-                if not posts_with_phrase.empty:
-                    df_clustered_phrase = cached_clustering(posts_with_phrase, eps=0.4, min_samples=2, max_features=5000)
-                    coordinated_groups = cached_find_coordinated_groups(df_clustered_phrase, threshold=0.8, max_features=5000)
-                    
-                    if coordinated_groups:
-                        for group in coordinated_groups:
-                            for post in group['posts']:
-                                account_id = post['account_id']
-                                if account_id not in account_campaigns:
-                                    account_campaigns[account_id] = set()
-                                account_campaigns[account_id].add(phrase)
+        return pd.DataFrame(multi_campaign_accounts)
+
+    if st.button("Analyze Account Overlap in Campaigns"):
+        with st.spinner("⏳ Analyzing accounts..."):
+            campaign_overlap_df = get_account_campaign_involvement(df_for_analysis)
             
-            multi_campaign_accounts = []
-            for account, phrases in account_campaigns.items():
-                if len(phrases) > 1:
-                    multi_campaign_accounts.append({
-                        "Account": account,
-                        "Campaigns Involved": len(phrases),
-                        "Phrases Used": ', '.join(sorted(list(phrases)))
-                    })
-            
-            return pd.DataFrame(multi_campaign_accounts)
-
-        if st.button("Analyze Account Overlap in Campaigns"):
-            with st.spinner("⏳ Analyzing accounts..."):
-                campaign_overlap_df = get_account_campaign_involvement(df_for_analysis)
-                
-                if not campaign_overlap_df.empty:
-                    st.info(f"✨ Found **{len(campaign_overlap_df)}** accounts involved in multiple coordinated campaigns.")
-                    st.dataframe(campaign_overlap_df.sort_values("Campaigns Involved", ascending=False), use_container_width=True)
-                else:
-                    st.info("No accounts were found to be involved in multiple coordinated campaigns with the current filters.")
-
-        st.markdown("---")
-        st.subheader("💰 Suspicious Fundraising Analysis")
-
-        # Function to get domain from URL
-        def get_domain(url):
-            extracted = tldextract.extract(url)
-            return f"{extracted.domain}.{extracted.suffix}" if extracted.domain and extracted.suffix else "Unknown"
-
-        # --- NEW LOGIC: SHOW TOP 10 FUNDRAISING LINKS FROM ALL POSTS ---
-        st.markdown("##### Top 10 Most Mentioned Fundraising URLs (All Posts)")
-        
-        all_fundraising_urls_list = []
-        # Use the global filtered data to get all fundraising links
-        for urls in filtered_df_global['fundraising_urls_in_text']:
-            all_fundraising_urls_list.extend(urls)
-
-        if all_fundraising_urls_list:
-            fundraising_df_all = pd.DataFrame(all_fundraising_urls_list, columns=['URL'])
-            fundraising_df_all['Domain'] = fundraising_df_all['URL'].apply(get_domain)
-            url_counts_all = fundraising_df_all.groupby(['Domain', 'URL']).size().reset_index(name='Total Mentions')
-            url_counts_all = url_counts_all.sort_values(by='Total Mentions', ascending=False)
-            
-            st.dataframe(url_counts_all.head(10), use_container_width=True)
-            
-            # Add download button for the full list
-            csv_for_download = convert_df_to_csv(url_counts_all)
-            st.download_button(
-                label="Download Full List of All Fundraising URLs",
-                data=csv_for_download,
-                file_name="all_fundraising_urls.csv",
-                mime="text/csv",
-                help="Download a CSV file containing all unique fundraising URLs found in the data, along with their total mention counts."
-            )
-
-        else:
-            st.info("No fundraising-related URLs were found in the selected data.")
-
-        # --- ORIGINAL LOGIC: SHOW COORDINATED FUNDRAISING LINKS ---
-        st.markdown("##### Fundraising URLs in Coordinated Posts")
-        
-        if 'coordinated_groups' not in st.session_state or not st.session_state.coordinated_groups:
-            st.info("Please run the 'Coordination Analysis' in the 'Analysis' tab first to identify coordinated posts.")
-        else:
-            all_fundraising_urls_coordinated = []
-            for group in st.session_state.coordinated_groups:
-                for post in group['posts']:
-                    if 'fundraising_urls_in_text' in post and post['fundraising_urls_in_text']:
-                        all_fundraising_urls_coordinated.extend(post['fundraising_urls_in_text'])
-            
-            if all_fundraising_urls_coordinated:
-                st.warning("🚨 **Warning**: This table shows fundraising links with a high frequency of coordinated posts. Investigate their legitimacy.")
-                
-                fundraising_df_coordinated = pd.DataFrame(all_fundraising_urls_coordinated, columns=['URL'])
-                fundraising_df_coordinated['Domain'] = fundraising_df_coordinated['URL'].apply(get_domain)
-                
-                url_counts_coordinated = fundraising_df_coordinated.groupby(['Domain', 'URL']).size().reset_index(name='Times Shared in Coordinated Posts')
-                url_counts_coordinated = url_counts_coordinated.sort_values(by='Times Shared in Coordinated Posts', ascending=False)
-                
-                st.dataframe(url_counts_coordinated, use_container_width=True)
-
+            if not campaign_overlap_df.empty:
+                st.info(f"✨ Found **{len(campaign_overlap_df)}** accounts involved in multiple coordinated campaigns.")
+                st.dataframe(campaign_overlap_df.sort_values("Campaigns Involved", ascending=False), use_container_width=True)
             else:
-                st.info("No fundraising-related URLs were found in coordinated groups.")
+                st.info("No accounts were found to be involved in multiple coordinated campaigns with the current filters.")
+    
+    st.markdown("---")
+    st.subheader("💰 Suspicious Fundraising Analysis")
+
+    st.info("This section shows all fundraising links found within the filtered data. The first table shows all unique links, while the second table focuses only on those found in coordinated posts for deeper investigation.")
+
+    # Function to get domain from URL
+    def get_domain(url):
+        extracted = tldextract.extract(url)
+        return f"{extracted.domain}.{extracted.suffix}" if extracted.domain and extracted.suffix else "Unknown"
+
+    # --- NEW LOGIC: SHOW TOP 10 FUNDRAISING LINKS FROM ALL POSTS ---
+    st.markdown("##### Top 10 Most Mentioned Fundraising URLs (All Posts)")
+    
+    all_fundraising_urls_list = []
+    # Use the global filtered data to get all fundraising links
+    for urls in filtered_df_global['fundraising_urls_in_text']:
+        all_fundraising_urls_list.extend(urls)
+
+    if all_fundraising_urls_list:
+        fundraising_df_all = pd.DataFrame(all_fundraising_urls_list, columns=['URL'])
+        fundraising_df_all['Domain'] = fundraising_df_all['URL'].apply(get_domain)
+        url_counts_all = fundraising_df_all.groupby(['Domain', 'URL']).size().reset_index(name='Total Mentions')
+        url_counts_all = url_counts_all.sort_values(by='Total Mentions', ascending=False)
+        
+        st.dataframe(url_counts_all.head(10), use_container_width=True)
+        
+        # Add download button for the full list
+        csv_for_download = convert_df_to_csv(url_counts_all)
+        st.download_button(
+            label="Download Full List of All Fundraising URLs",
+            data=csv_for_download,
+            file_name="all_fundraising_urls.csv",
+            mime="text/csv",
+            help="Download a CSV file containing all unique fundraising URLs found in the data, along with their total mention counts."
+        )
+
+    else:
+        st.info("No fundraising-related URLs were found in the selected data.")
+
+    # --- ORIGINAL LOGIC: SHOW COORDINATED FUNDRAISING LINKS ---
+    st.markdown("##### Fundraising URLs in Coordinated Posts")
+    
+    if 'coordinated_groups' not in st.session_state or not st.session_state.coordinated_groups:
+        st.info("Please run the 'Coordination Analysis' in the 'Analysis' tab first to identify coordinated posts.")
+    else:
+        all_fundraising_urls_coordinated = []
+        for group in st.session_state.coordinated_groups:
+            for post in group['posts']:
+                if 'fundraising_urls_in_text' in post and post['fundraising_urls_in_text']:
+                    all_fundraising_urls_coordinated.extend(post['fundraising_urls_in_text'])
+        
+        if all_fundraising_urls_coordinated:
+            st.warning("🚨 **Warning**: This table shows fundraising links with a high frequency of coordinated posts. Investigate their legitimacy.")
+            
+            fundraising_df_coordinated = pd.DataFrame(all_fundraising_urls_coordinated, columns=['URL'])
+            fundraising_df_coordinated['Domain'] = fundraising_df_coordinated['URL'].apply(get_domain)
+            
+            url_counts_coordinated = fundraising_df_coordinated.groupby(['Domain', 'URL']).size().reset_index(name='Times Shared in Coordinated Posts')
+            url_counts_coordinated = url_counts_coordinated.sort_values(by='Times Shared in Coordinated Posts', ascending=False)
+            
+            st.dataframe(url_counts_coordinated, use_container_width=True)
+
+        else:
+            st.info("No fundraising-related URLs were found in coordinated groups.")
