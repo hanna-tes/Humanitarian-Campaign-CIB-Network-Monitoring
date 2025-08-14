@@ -18,6 +18,37 @@ import tldextract
 st.set_page_config(page_title="Humanitarian Campaign Monitor", layout="wide")
 st.title("🕊️ Humanitarian Campaign Monitoring Dashboard")
 
+# --- Add Professional Background Image ---
+def add_bg_image():
+    st.markdown(
+        """
+        <style>
+        .stApp {
+            background-image: url("https://images.unsplash.com/photo-1587614382346-4ec70e388b28?ixlib=rb-4.0.3&auto=format&fit=crop&w=1470&q=80");
+            background-attachment: fixed;
+            background-size: cover;
+            background-position: center;
+            color: white;
+        }
+        .css-1d391kg, .stMarkdown h1, h2, h3 {
+            color: white !important;
+            text-shadow: 2px 2px 4px #000;
+        }
+        .stSidebar {
+            background-color: rgba(255, 255, 255, 0.95);
+        }
+        .stDataFrame, .stTable {
+            background-color: rgba(255, 255, 255, 0.9);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+add_bg_image()
+
 # --- Define the 6 key phrases to track ---
 PHRASES_TO_TRACK = [
     "If you're scrolling, PLEASE leave a dot",
@@ -75,35 +106,20 @@ def extract_all_urls(text):
     if pd.isna(text) or not isinstance(text, str): return []
     return re.findall(r'https?://\S+', text)
 
-# --- Auto-Encoding CSV Reader (Fixed for Meltwater) ---
-def read_uploaded_file_with_encoding_detection(uploaded_file, file_name):
-    if not uploaded_file:
-        return pd.DataFrame()
-    bytes_data = uploaded_file.getvalue()
-    # Your requested encodings
-    encodings = ['utf-8-sig', 'utf-16le', 'utf-16be', 'utf-16', 'latin1', 'cp1252']
-    for enc in encodings:
-        try:
-            decoded = bytes_data.decode(enc)
-            st.sidebar.info(f"✅ {file_name}: Decoded with `{enc}`")
-            sample = decoded.splitlines()[0] if decoded.splitlines() else ""
-            sep = '\t' if '\t' in sample else ','
-            df = pd.read_csv(StringIO(decoded), sep=sep, on_bad_lines='skip', low_memory=False)
-            return df
-        except UnicodeDecodeError:
-            continue
-        except Exception as e:
-            st.sidebar.warning(f"⚠️ Failed to parse {file_name}: {e}")
-            continue
-    st.sidebar.error(f"❌ Failed to decode '{file_name}'.")
-    return pd.DataFrame()
-
 # --- Combine Datasets with Flexible Column Mapping ---
 def combine_social_media_data(
     meltwater_df=None,
     civicsignals_df=None,
     openmeasure_df=None,
+    meltwater_object_col='hit sentence',
+    civicsignals_object_col='title',
+    openmeasure_object_col='text'
 ):
+    """
+    Combines datasets from Meltwater, CivicSignals, and Open-Measure.
+    Maps original column names to core analysis columns.
+    Handles case-insensitive column matching.
+    """
     combined_dfs = []
 
     def get_col(df, possible_names, default=None):
@@ -119,7 +135,7 @@ def combine_social_media_data(
         mw = pd.DataFrame()
         mw['account_id'] = get_col(meltwater_df, ['influencer', 'Author', 'author', 'User'], 'Unknown_User')
         mw['content_id'] = get_col(meltwater_df, ['tweet id', 'Post ID', 'post_id', 'id'], 'Unknown_ID')
-        mw['object_id'] = get_col(meltwater_df, ['hit sentence', 'Content', 'content', 'Text'], '')
+        mw['object_id'] = get_col(meltwater_df, [meltwater_object_col, 'Content', 'content', 'Text'], '')
         mw['URL'] = get_col(meltwater_df, ['url', 'URL', 'Link', 'link'], '')
         mw['timestamp_share'] = get_col(meltwater_df, ['date', 'Published Date', 'publish_date', 'Date', 'created_at'], None)
         mw['source_dataset'] = 'Meltwater'
@@ -130,7 +146,7 @@ def combine_social_media_data(
         cs = pd.DataFrame()
         cs['account_id'] = get_col(civicsignals_df, ['media_name', 'Outlet', 'outlet', 'Publisher'], 'Unknown_Outlet')
         cs['content_id'] = get_col(civicsignals_df, ['stories_id', 'story_id', 'id'], 'Unknown_ID')
-        cs['object_id'] = get_col(civicsignals_df, ['title', 'Title', 'Headline'], '')
+        cs['object_id'] = get_col(civicsignals_df, [civicsignals_object_col, 'title', 'Title'], '')
         cs['URL'] = get_col(civicsignals_df, ['url', 'URL', 'Story URL'], '')
         cs['timestamp_share'] = get_col(civicsignals_df, ['publish_date', 'date', 'Date'], None)
         cs['source_dataset'] = 'CivicSignals'
@@ -141,7 +157,7 @@ def combine_social_media_data(
         om = pd.DataFrame()
         om['account_id'] = get_col(openmeasure_df, ['actor_username', 'username', 'user'], 'Unknown_User')
         om['content_id'] = get_col(openmeasure_df, ['id', 'post_id'], 'Unknown_ID')
-        om['object_id'] = get_col(openmeasure_df, ['text', 'content'], '')
+        om['object_id'] = get_col(openmeasure_df, [openmeasure_object_col, 'text', 'content'], '')
         om['URL'] = get_col(openmeasure_df, ['url', 'link'], '')
         om['timestamp_share'] = get_col(openmeasure_df, ['created_at', 'date', 'timestamp'], None)
         om['source_dataset'] = 'OpenMeasure'
@@ -159,6 +175,7 @@ def combine_social_media_data(
     combined['timestamp_share'] = combined['timestamp_share'].apply(parse_timestamp_robust)
     combined = combined.dropna(subset=['timestamp_share']).reset_index(drop=True)
     combined = combined[combined['object_id'].str.strip() != ""].copy()
+    combined = combined.drop_duplicates(subset=['account_id', 'content_id', 'object_id', 'timestamp_share'], ignore_index=True)
     return combined
 
 # --- Final Preprocessing Function ---
@@ -173,6 +190,7 @@ def final_preprocess_and_map_columns(df):
     df_processed['Platform'] = df_processed['URL'].apply(infer_platform_from_url)
     df_processed['extracted_urls'] = df_processed['object_id'].apply(extract_all_urls)
 
+    # Assign phrase
     def assign_phrase(text):
         for p in PHRASES_TO_TRACK:
             if p.lower() in text:
@@ -237,8 +255,7 @@ def build_user_interaction_graph(df):
                 G[u1][u2]['weight'] += 1
             else:
                 G.add_edge(u1, u2, weight=1)
-    all_users = df['account_id'].dropna().unique()
-    for user in all_users:
+    for user in df['account_id'].dropna().unique():
         if user not in G: G.add_node(user)
     if not G.nodes(): return G, {}, {}
     pos = nx.kamada_kawai_layout(G)
@@ -253,6 +270,28 @@ def cached_find_coordinated_groups(_df, threshold, max_features): return find_co
 @st.cache_data
 def cached_network_graph(_df): return build_user_interaction_graph(_df)
 
+# --- Auto-Encoding CSV Reader ---
+def read_uploaded_file_with_encoding_detection(uploaded_file, file_name):
+    if not uploaded_file:
+        return pd.DataFrame()
+    bytes_data = uploaded_file.getvalue()
+    encodings = ['utf-8-sig', 'utf-16le', 'utf-16be', 'utf-16', 'latin1', 'cp1252']
+    for enc in encodings:
+        try:
+            decoded = bytes_data.decode(enc)
+            st.sidebar.info(f"✅ {file_name}: Decoded with `{enc}`")
+            sample = decoded.splitlines()[0] if decoded.splitlines() else ""
+            sep = '\t' if '\t' in sample else ','
+            df = pd.read_csv(StringIO(decoded), sep=sep, on_bad_lines='skip', low_memory=False)
+            return df
+        except UnicodeDecodeError:
+            continue
+        except Exception as e:
+            st.sidebar.warning(f"⚠️ Failed to parse {file_name}: {e}")
+            continue
+    st.sidebar.error(f"❌ Failed to decode '{file_name}'.")
+    return pd.DataFrame()
+
 # --- Sidebar: Upload Multiple Files ---
 st.sidebar.header("📤 Upload Your Data")
 st.sidebar.info("Upload one or more CSV files. You can upload multiple Meltwater files.")
@@ -266,6 +305,13 @@ uploaded_openmeasure = st.sidebar.file_uploader("Upload Open-Measure CSV", type=
 # --- Read and Combine ---
 if 'combined_raw_df' not in st.session_state:
     st.session_state.combined_raw_df = pd.DataFrame()
+
+# Coordination mode selector
+coordination_mode = st.sidebar.radio(
+    "Select Coordination Mode",
+    options=["Text Content", "URL"],
+    help="Choose whether to analyze coordination based on text similarity or shared URLs."
+)
 
 if st.sidebar.button("🔄 Load & Combine Data"):
     with st.spinner("🔄 Loading and combining datasets..."):
@@ -293,10 +339,19 @@ if st.sidebar.button("🔄 Load & Combine Data"):
         if not dfs:
             st.error("❌ No files uploaded or all failed to load.")
         else:
+            # Map object column based on mode
+            obj_map = {
+                "meltwater": "hit sentence" if coordination_mode == "Text Content" else "url",
+                "civicsignals": "title" if coordination_mode == "Text Content" else "url",
+                "openmeasure": "text" if coordination_mode == "Text Content" else "url"
+            }
             st.session_state.combined_raw_df = combine_social_media_data(
-                meltwater_df=pd.concat([d for d in dfs if any(kw in [c.lower() for c in d.columns] for kw in ['influencer', 'author'])], ignore_index=True) if any(any(kw in [c.lower() for c in d.columns] for kw in ['influencer', 'author']) for d in dfs) else None,
+                meltwater_df=pd.concat([d for d in dfs if 'influencer' in d.columns or any(kw in [c.lower() for c in d.columns] for kw in ['author', 'content'])], ignore_index=True) if any('influencer' in d.columns or any(kw in [c.lower() for c in d.columns] for kw in ['author', 'content']) for d in dfs) else None,
                 civicsignals_df=next((d for d in dfs if 'media_name' in d.columns), None),
-                openmeasure_df=next((d for d in dfs if 'actor_username' in d.columns), None)
+                openmeasure_df=next((d for d in dfs if 'actor_username' in d.columns), None),
+                meltwater_object_col=obj_map["meltwater"],
+                civicsignals_object_col=obj_map["civicsignals"],
+                openmeasure_object_col=obj_map["openmeasure"]
             )
             if st.session_state.combined_raw_df.empty:
                 st.error("❌ No valid data after combining. Check column names.")
@@ -426,9 +481,90 @@ with tab2:
 
             csv = convert_df(pairs_df)
             st.download_button("📥 Download Similar Pairs Report", csv, "similar_pairs.csv", "text/csv")
-    else:
-        st.info("Upload data and click 'Run Similarity Analysis' to begin.")
 
+    # ==================== NEW: Suspicious Fundraising Section ====================
+    st.markdown("---")
+    st.subheader("💰 Suspicious Fundraising Links Detected")
+
+    if 'extracted_urls' not in df_for_analysis.columns:
+        st.info("No URL data available.")
+    else:
+        # Extract all URLs
+        all_urls = df_for_analysis.explode('extracted_urls')
+        all_urls = all_urls.dropna(subset=['extracted_urls'])
+        all_urls['clean_url'] = all_urls['extracted_urls'].str.strip().str.lower()
+
+        # Define domains
+        trusted_domains = {
+            'gofundme.com', 'paypal.me', 'unicef.org', 'icrc.org', 'doctorswithoutborders.org',
+            'redcross.org', 'globalgiving.org', 'charitywater.org', 'donorbox.org'
+        }
+        suspicious_keywords = ['fund', 'donate', 'give', 'support', 'relief']
+
+        def get_domain(url):
+            from urllib.parse import urlparse
+            try:
+                return urlparse(url).netloc.lower().strip()
+            except:
+                return ""
+
+        all_urls['domain'] = all_urls['clean_url'].apply(get_domain)
+        all_urls['is_fundraising'] = all_urls['domain'].apply(
+            lambda d: 'Trusted' if d in trusted_domains
+            else 'Suspicious' if d and (any(k in d for k in suspicious_keywords) or '.me' in d)
+            else 'Other'
+        )
+
+        fundraising_df = all_urls[all_urls['is_fundraising'].isin(['Trusted', 'Suspicious'])].copy()
+
+        if fundraising_df.empty:
+            st.info("No fundraising links found in the data.")
+        else:
+            st.success(f"✅ Found {len(fundraising_df)} fundraising link shares from {fundraising_df['account_id'].nunique()} accounts.")
+
+            # Summarize campaigns
+            campaign_summary = fundraising_df.groupby('clean_url').agg(
+                Num_Posts=('content_id', 'size'),
+                Num_Unique_Accounts=('account_id', 'nunique'),
+                Top_Accounts=('account_id', lambda x: ', '.join(x.value_counts().head(3).index)),
+                First_Shared=('timestamp_share', 'min'),
+                Last_Shared=('timestamp_share', 'max'),
+                Campaign_Type=('is_fundraising', 'first')
+            ).reset_index()
+
+            campaign_summary['First_Shared'] = pd.to_datetime(campaign_summary['First_Shared'], unit='s', utc=True)
+            campaign_summary['Last_Shared'] = pd.to_datetime(campaign_summary['Last_Shared'], unit='s', utc=True)
+
+            # Add risk score
+            campaign_summary['Risk_Score'] = (
+                (campaign_summary['Num_Posts'] / campaign_summary['Num_Unique_Accounts']) *
+                np.where(campaign_summary['Campaign_Type'] == 'Suspicious', 2.0, 1.0)
+            )
+            campaign_summary['Risk_Flag'] = np.where(
+                campaign_summary['Risk_Score'] > campaign_summary['Risk_Score'].quantile(0.8), 'High',
+                np.where(campaign_summary['Campaign_Type'] == 'Suspicious', 'Medium', 'Low')
+            )
+
+            st.markdown("### 🚩 Detected Fundraising Campaigns")
+            st.dataframe(
+                campaign_summary[[
+                    'clean_url', 'Campaign_Type', 'Num_Posts', 'Num_Unique_Accounts',
+                    'Top_Accounts', 'First_Shared', 'Last_Shared', 'Risk_Flag'
+                ]].sort_values('Risk_Score', ascending=False),
+                use_container_width=True
+            )
+
+            @st.cache_data
+            def convert_df(_df):
+                return _df.to_csv(index=False).encode('utf-8')
+
+            csv = convert_df(campaign_summary)
+            st.download_button(
+                "📥 Download Fundraising Report",
+                csv,
+                "fundraising_campaigns.csv",
+                "text/csv"
+            )
 # ==================== TAB 3: Network & Risk ====================
 with tab3:
     st.subheader("🌐 Network of Coordinated Accounts")
