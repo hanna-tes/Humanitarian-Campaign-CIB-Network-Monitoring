@@ -352,7 +352,7 @@ data_source = st.sidebar.radio("Choose data source:", ["Upload Files", "Use Defa
 if data_source == "Use Default Dataset":
     st.sidebar.info("Using default humanitarian dataset from GitHub.")
     with st.spinner("📥 Loading default dataset..."):
-        base_url = "https://raw.githubusercontent.com/hanna-tes/CIB-network-monitoring/refs/heads/main/"
+        base_url = "https://raw.githubusercontent.com/hanna-tes/Humanitarian-Campaign-CIB-Network-Monitoring/refs/heads/main/"
         default_url = f"{base_url}3_replies_%E2%80%94_even_dots_%E2%80%94_can_break_the_algorithm_AN%20-%20Aug%2013%2C%202025%20-%2010%2037%2011%20AM.csv"  # Replace with your actual humanitarian dataset
         try:
             meltwater_df_default = pd.read_csv(default_url, sep=' ')
