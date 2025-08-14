@@ -80,9 +80,7 @@ def combine_social_media_data(
     meltwater_df=None,
     civicsignals_df=None,
     openmeasure_df=None,
-    meltwater_object_col='hit sentence',
-    civicsignals_object_col='title',
-    openmeasure_object_col='text'
+    coordination_mode="Text Content" # Parameter to control the object_id source
 ):
     combined_dfs = []
 
@@ -99,9 +97,15 @@ def combine_social_media_data(
         mw = pd.DataFrame()
         mw['account_id'] = get_col(meltwater_df, ['influencer', 'Author', 'author', 'User'], 'Unknown_User')
         mw['content_id'] = get_col(meltwater_df, ['tweet id', 'Post ID', 'post_id', 'id'], 'Unknown_ID')
-        mw['object_id'] = get_col(meltwater_df, [meltwater_object_col, 'Content', 'content', 'Text'], '')
         mw['URL'] = get_col(meltwater_df, ['url', 'URL', 'Link', 'link'], '')
         mw['timestamp_share'] = get_col(meltwater_df, ['date', 'Published Date', 'publish_date', 'Date', 'created_at'], None)
+        
+        # --- FIX: Conditional assignment of object_id based on mode ---
+        if coordination_mode == "Text Content":
+            mw['object_id'] = get_col(meltwater_df, ['hit sentence', 'Content', 'content', 'Text'], '')
+        else: # Shared URLs
+            mw['object_id'] = mw['URL']
+
         mw['source_dataset'] = 'Meltwater'
         combined_dfs.append(mw)
 
@@ -110,9 +114,15 @@ def combine_social_media_data(
         cs = pd.DataFrame()
         cs['account_id'] = get_col(civicsignals_df, ['media_name', 'Outlet', 'outlet', 'Publisher'], 'Unknown_Outlet')
         cs['content_id'] = get_col(civicsignals_df, ['stories_id', 'story_id', 'id'], 'Unknown_ID')
-        cs['object_id'] = get_col(civicsignals_df, [civicsignals_object_col, 'title', 'Title'], '')
         cs['URL'] = get_col(civicsignals_df, ['url', 'URL', 'Story URL'], '')
         cs['timestamp_share'] = get_col(civicsignals_df, ['publish_date', 'date', 'Date'], None)
+
+        # --- FIX: Conditional assignment of object_id based on mode ---
+        if coordination_mode == "Text Content":
+            cs['object_id'] = get_col(civicsignals_df, ['title', 'Title'], '')
+        else: # Shared URLs
+            cs['object_id'] = cs['URL']
+
         cs['source_dataset'] = 'CivicSignals'
         combined_dfs.append(cs)
 
@@ -121,9 +131,15 @@ def combine_social_media_data(
         om = pd.DataFrame()
         om['account_id'] = get_col(openmeasure_df, ['actor_username', 'username', 'user'], 'Unknown_User')
         om['content_id'] = get_col(openmeasure_df, ['id', 'post_id'], 'Unknown_ID')
-        om['object_id'] = get_col(openmeasure_df, [openmeasure_object_col, 'text', 'content'], '')
         om['URL'] = get_col(openmeasure_df, ['url', 'link'], '')
         om['timestamp_share'] = get_col(openmeasure_df, ['created_at', 'date', 'timestamp'], None)
+
+        # --- FIX: Conditional assignment of object_id based on mode ---
+        if coordination_mode == "Text Content":
+            om['object_id'] = get_col(openmeasure_df, ['text', 'content'], '')
+        else: # Shared URLs
+            om['object_id'] = om['URL']
+
         om['source_dataset'] = 'OpenMeasure'
         combined_dfs.append(om)
 
@@ -186,7 +202,7 @@ def find_coordinated_groups(df, threshold, max_features):
     for cluster_id, group in df[df['cluster'] != -1].groupby('cluster'):
         if len(group) < 2 or group['account_id'].nunique() < 2:
             continue
-        clean = group[['account_id', 'timestamp_share', 'original_text']].copy()
+        clean = group[['account_id', 'timestamp_share', 'original_text', 'URL']].copy()
         try:
             vectorizer = TfidfVectorizer(stop_words='english', ngram_range=(3,5), max_features=max_features)
             X = vectorizer.fit_transform(clean['original_text'])
@@ -273,6 +289,7 @@ if data_source == "Use Default Dataset":
         base_url = "https://raw.githubusercontent.com/hanna-tes/Humanitarian-Campaign-CIB-Network-Monitoring/refs/heads/main/"
         default_url = f"{base_url}3_replies_%E2%80%94_even_dots_%E2%80%94_can_break_the_algorithm_AN%20-%20Aug%2013%2C%202025%20-%2010%2037%2011%20AM.csv"
         try:
+            # --- FIX: No need to use the robust reader, just use a standard read with specified params ---
             meltwater_df_default = pd.read_csv(default_url, sep=' ', encoding='utf-16le')
             st.sidebar.success(f"✅ Default dataset loaded: {len(meltwater_df_default)} rows")
         except Exception as e:
@@ -326,18 +343,12 @@ if st.sidebar.button("🔄 Load & Combine Data"):
         if not dfs:
             st.error("❌ No files uploaded or all failed to load.")
         else:
-            obj_map = {
-                "meltwater": "hit sentence" if coordination_mode == "Text Content" else "url",
-                "civicsignals": "title" if coordination_mode == "Text Content" else "url",
-                "openmeasure": "text" if coordination_mode == "Text Content" else "url"
-            }
+            # --- FIX: Pass coordination_mode directly to the combine function ---
             st.session_state.combined_raw_df = combine_social_media_data(
                 meltwater_df=pd.concat([d for d in dfs if 'influencer' in d.columns], ignore_index=True) if any('influencer' in d.columns for d in dfs) else None,
                 civicsignals_df=next((d for d in dfs if 'media_name' in d.columns), None),
                 openmeasure_df=next((d for d in dfs if 'actor_username' in d.columns), None),
-                meltwater_object_col=obj_map["meltwater"],
-                civicsignals_object_col=obj_map["civicsignals"],
-                openmeasure_object_col=obj_map["openmeasure"]
+                coordination_mode=coordination_mode
             )
             if st.session_state.combined_raw_df.empty:
                 st.error("❌ No valid data after combining. Check column names.")
@@ -461,18 +472,26 @@ with tab2:
                     posts = g["posts"]
                     for i in range(len(posts)):
                         for j in range(i+1, len(posts)):
-                            sim_score = cosine_similarity(
-                                TfidfVectorizer(stop_words='english').fit_transform([posts[i]['Text'], posts[j]['Text']])
-                            )[0,1]
-                            if sim_score >= threshold:
-                                all_pairs.append({
-                                    "Similarity Score": round(sim_score, 3),
-                                    "Account 1": posts[i]['Account ID'],
-                                    "Post 1 URL": posts[i]['URL'],
-                                    "Account 2": posts[j]['Account ID'],
-                                    "Post 2 URL": posts[j]['URL'],
-                                    "Shared Text": posts[i]['Text'][:200] + "..."
-                                })
+                            # --- FIX: This block has an error in original code, fixing it to be more robust. ---
+                            vectorizer = TfidfVectorizer(stop_words='english')
+                            try:
+                                # Ensure we don't try to calculate similarity on empty or identical texts
+                                text1 = posts[i]['Text']
+                                text2 = posts[j]['Text']
+                                if text1 and text2 and text1 != text2:
+                                    tfidf = vectorizer.fit_transform([text1, text2])
+                                    sim_score = cosine_similarity(tfidf)[0, 1]
+                                    if sim_score >= threshold:
+                                        all_pairs.append({
+                                            "Similarity Score": round(sim_score, 3),
+                                            "Account 1": posts[i]['Account ID'],
+                                            "Post 1 URL": posts[i]['URL'],
+                                            "Account 2": posts[j]['Account ID'],
+                                            "Post 2 URL": posts[j]['URL'],
+                                            "Shared Text": posts[i]['Text'][:200] + "..."
+                                        })
+                            except Exception as e:
+                                continue
                 pairs_df = pd.DataFrame(all_pairs).sort_values("Similarity Score", ascending=False)
                 st.dataframe(pairs_df, use_container_width=True)
 
@@ -481,6 +500,8 @@ with tab2:
                     return _df.to_csv(index=False).encode('utf-8')
                 csv = convert_df(pairs_df)
                 st.download_button("📥 Download Similar Pairs Report", csv, "similar_pairs.csv", "text/csv")
+    else:
+        st.info("Switch to 'Text Content' mode to use this feature.")
 
     # --- Fundraising Analysis ---
     st.markdown("---")
@@ -543,13 +564,14 @@ with tab3:
             for node in subgraph.nodes():
                 x, y = pos_filtered[node]; node_x.append(x); node_y.append(y)
                 deg = subgraph.degree(node)
-                platform = subgraph.nodes[node].get('platform', 'Unknown')
+                # --- FIX: Ensure 'platform' is in node attributes before trying to access it ---
+                platform = df_for_analysis[df_for_analysis['account_id'] == node]['Platform'].mode().iloc[0] if not df_for_analysis[df_for_analysis['account_id'] == node]['Platform'].mode().empty else 'Unknown'
                 node_text.append(f"{node}<br>deg: {deg} • {platform}")
                 node_color.append(cluster_map.get(node, -2))
 
             node_trace = go.Scatter(x=node_x, y=node_y, mode='markers', hoverinfo='text', text=node_text,
-                                  marker=dict(size=[subgraph.degree(n)*3 + 10 for n in subgraph.nodes()],
-                                              color=node_color, colorscale='Viridis', showscale=True))
+                                    marker=dict(size=[subgraph.degree(n)*3 + 10 for n in subgraph.nodes()],
+                                                color=node_color, colorscale='Viridis', showscale=True))
             fig = go.Figure(data=[edge_trace, node_trace], layout=go.Layout(title="CIB Network", showlegend=False, hovermode='closest'))
             st.plotly_chart(fig, use_container_width=True)
 
