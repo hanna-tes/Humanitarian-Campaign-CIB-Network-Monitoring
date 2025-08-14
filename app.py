@@ -175,7 +175,7 @@ def combine_social_media_data(
         om['content_id'] = get_specific_col(openmeasure_df, 'id')
         om['object_id'] = get_specific_col(openmeasure_df, openmeasure_object_col.lower())
         om['original_url'] = get_specific_col(openmeasure_df, 'url')
-        om['timestamp_share'] = get_specific_col(openmeasure_df, 'created_at')
+        om['timestamp_share'] = get_specific_col(om_df, 'created_at')
         om['source_dataset'] = 'OpenMeasure'
         combined_dfs.append(om)
 
@@ -673,6 +673,13 @@ with tab1:
     st.markdown(f"**Coordination Mode:** `{coordination_mode}` | **Total Posts (All Time):** `{len(df):,}` | **Posts After Filters:** `{len(filtered_df_global):,}`")
 
     if not filtered_df_global.empty:
+        # Post Volume per Time
+        st.markdown("### 📈 Post Volume Over Time")
+        filtered_df_global['date_utc'] = pd.to_datetime(filtered_df_global['timestamp_share'], unit='s', utc=True)
+        time_series_data = filtered_df_global.set_index('date_utc').resample('D').size().reset_index(name='post_count')
+        fig_volume = px.line(time_series_data, x='date_utc', y='post_count', title='Posts per Day (UTC)')
+        st.plotly_chart(fig_volume, use_container_width=True)
+
         # Sample data
         st.markdown("### 📋 Raw Data Sample (First 10 Rows)")
         display_df = filtered_df_global.copy()
@@ -892,38 +899,9 @@ with tab3:
                 else:
                     st.warning("The network graph could not be generated. There may not be enough coordinated activity to form a network.")
         st.markdown("---")
-        st.subheader("⚠️ Emerging Risk Phrases")
-        
-        # --- NEW CODE FOR EMERGING RISK PHRASES ---
-        # This section is now complete
-        if 'coordinated_groups' in locals() and coordinated_groups:
-            all_coordinated_phrases = [
-                post['text'] for group in coordinated_groups for post in group['posts']
-                if 'text' in post and coordination_mode == "Text Content"
-            ]
-            if all_coordinated_phrases:
-                word_counts = Counter(" ".join(all_coordinated_phrases).split())
-                
-                # Exclude common stopwords from the count
-                stopwords = st.text_input("Exclude stopwords (comma-separated)", "the, and, a, of, is, with, to, in, for, can, from")
-                stopwords_list = {w.strip() for w in stopwords.lower().split(',')}
-                filtered_word_counts = {word: count for word, count in word_counts.items() if word not in stopwords_list}
-                
-                top_phrases = Counter(filtered_word_counts).most_common(5)
-
-                st.markdown("Here are the top 5 most frequent phrases/words found in coordinated posts. These may indicate key narratives or calls to action.")
-                for phrase, count in top_phrases:
-                    st.markdown(f"- **`{phrase}`** (appears **{count}** times)")
-            else:
-                st.info("No text content found in coordinated groups to analyze for emerging phrases.")
-        else:
-            st.info("No coordinated groups found to analyze for emerging phrases. Please run the analysis in the 'Analysis' tab first.")
-            
-        st.markdown("---")
         st.subheader("💰 Suspicious Fundraising Analysis")
         
         # --- NEW CODE FOR SUSPICIOUS FUNDRAISING ANALYSIS ---
-        # This section is now complete
         if 'coordinated_groups' in locals() and coordinated_groups:
             # Step 1: Gather all URLs from coordinated groups
             all_urls_in_groups = [
