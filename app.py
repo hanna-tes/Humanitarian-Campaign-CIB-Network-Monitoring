@@ -740,9 +740,6 @@ with tab2:
             threshold = st.slider("Coordination Similarity Threshold", min_value=0.5, max_value=1.0, value=0.8, step=0.05,
                                   help="Posts must have a similarity score above this to be considered coordinated.")
         
-        max_features = st.slider("Max TF-IDF Features", min_value=100, max_value=10000, value=5000, step=100,
-                                 help="Limits the vocabulary size for text vectorization. Helps with performance and noise reduction.")
-        
         # NEW: Time-based coordination feature
         time_window_minutes = st.slider("Max Time Difference for 'Strong' Coordination (Minutes)", min_value=1, max_value=120, value=10, step=1,
                                         help="Only consider posts coordinated if they are published within this time window of each other.")
@@ -783,19 +780,27 @@ with tab2:
                         for i, group in enumerate(top_groups):
                             with st.expander(f"Group {i+1}: {group['num_posts']} Posts ({group['coordination_type']}) - Max Sim: {group['max_similarity_score']}"):
                                 group_df = pd.DataFrame(group['posts'])
-                                st.dataframe(group_df[['account_id', 'text', 'URL', 'Platform']].head(10), use_container_width=True)
-                                
                                 group_df['Timestamp'] = pd.to_datetime(group_df['Timestamp'], unit='s', utc=True)
-                                group_df['Date'] = group_df['Timestamp'].dt.date
-                                timeline = group_df.groupby('Date').size().reset_index(name='count')
-                                fig = px.line(timeline, x='Date', y='count', title="Posts per Day for this Group")
                                 
-                                st.plotly_chart(fig, use_container_width=True, key=f"group_chart_{i}")
+                                # NEW: Scatter plot for granular post timeline
+                                fig_timeline = px.scatter(
+                                    group_df,
+                                    x='Timestamp',
+                                    y='account_id',
+                                    color='Platform',
+                                    hover_data=['text', 'URL'],
+                                    title="Individual Posts Over Time for this Group"
+                                )
+                                fig_timeline.update_layout(xaxis_title="Time (UTC)", yaxis_title="Account ID")
+                                st.plotly_chart(fig_timeline, use_container_width=True, key=f"group_scatter_{i}")
+                                
+                                st.markdown("##### Raw Data Sample for this Group")
+                                st.dataframe(group_df[['account_id', 'text', 'URL', 'Platform', 'Timestamp']].head(10), use_container_width=True)
                     else:
                         st.info("No coordinated groups found with the current parameters.")
                 else:
                     st.error("Clustering failed. Please check your data or parameters.")
-
+                    
 # ==================== TAB 3: Network Graph ====================
 with tab3:
     st.subheader("🌐 Network Graph")
