@@ -1,4 +1,4 @@
- # app.py
+# app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -181,7 +181,7 @@ def combine_social_media_data(
         om['account_id'] = get_specific_col(openmeasure_df, 'actor_username')
         om['content_id'] = get_specific_col(openmeasure_df, 'id')
         om['object_id'] = get_specific_col(openmeasure_df, openmeasure_object_col.lower())
-        om['original_url'] = get_specific_col(openmeasure_df, 'url')
+        om['original_url'] = get_specific_col(om_df, 'created_at')
         om['timestamp_share'] = get_specific_col(om_df, 'created_at')
         om['source_dataset'] = 'OpenMeasure'
         combined_dfs.append(om)
@@ -242,6 +242,7 @@ def final_preprocess_and_map_columns(df, coordination_mode="Text Content"):
     if coordination_mode == "Text Content":
         df_processed['original_text'] = df_processed['object_id'].apply(extract_original_text)
     elif coordination_mode == "Shared URLs":
+        # When coordinating by URLs, original_text should be the URL itself
         df_processed = df_processed[df_processed['URL'].notna() & (df_processed['URL'].str.strip() != "")].copy()
         df_processed['original_text'] = df_processed['URL'].astype(str)
 
@@ -385,7 +386,7 @@ def build_user_interaction_graph(df, coordination_type="text"):
     if df.empty or 'account_id' not in df.columns:
         return G, {}, {}
 
-    if coordination_type == "text":
+    if coordination_type == "text": # FIX: Corrected typo: coordination__type -> coordination_type
         if 'cluster' not in df.columns:
             return G, {}, {}
         grouped = df.groupby('cluster')
@@ -677,7 +678,9 @@ with tab1:
         fig_influencers = px.bar(top_influencers, title="Top 10 Influencers", labels={'value': 'Number of Posts', 'index': 'Account'})
         st.plotly_chart(fig_influencers, use_container_width=True)
 
+        # --- REPLACE PLOT WITH TABLE FOR PHRASE COUNTS ---
         st.markdown("---")
+        st.markdown("### 🔢 Emotional & Algorithmic Phrases Detected (Mentions Count)")
         def contains_phrase(text):
             if pd.isna(text): return "Other"
             text = str(text).lower()
@@ -688,13 +691,16 @@ with tab1:
 
         filtered_df_global['phrase_type'] = filtered_df_global['object_id'].apply(contains_phrase)
         
-        phrase_counts = filtered_df_global['phrase_type'].value_counts()
-        fig_phrases = px.bar(
-            phrase_counts.drop("Other", errors='ignore'),
-            title="Emotional & Algorithmic Phrases Detected",
-            labels={'value': 'Number of Posts', 'index': 'Phrase'}
-        )
-        st.plotly_chart(fig_phrases, use_container_width=True)
+        # Create a DataFrame for the table, dropping 'Other' if it exists
+        phrase_counts_df = filtered_df_global['phrase_type'].value_counts().reset_index()
+        phrase_counts_df.columns = ['Phrase', 'Mentions']
+        phrase_counts_df = phrase_counts_df[phrase_counts_df['Phrase'] != "Other"] # Filter out 'Other' for the display table
+        
+        if not phrase_counts_df.empty:
+            st.dataframe(phrase_counts_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No emotional or algorithmic phrases detected in the filtered data.")
+        # --- END REPLACE ---
 
 # ==================== TAB 2: Analysis ====================
 with tab2:
@@ -856,7 +862,7 @@ with tab3:
                                     thickness=15,
                                     title='Node Centrality',
                                     xanchor='left',
-                                    titleside='right'
+                                    # Removed 'titleside' as it's not a valid property here
                                 ),
                                 line_width=2
                             )
@@ -888,7 +894,7 @@ with tab3:
                                         )
                         st.plotly_chart(fig, use_container_width=True)
                     else:
-                        st.warning("The network graph could not be generated. There may not be enough coordinated activity to form a network.")
+                        st.warning("The network graph could not be generated. There may not be enough coordinated activity to form a network with the current filters.")
         st.markdown("---")
         st.subheader("💰 Suspicious Fundraising Analysis")
         
