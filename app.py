@@ -462,6 +462,40 @@ def build_user_interaction_graph(df, coordination_type="text"):
     else:
         return G, {}, {}
 
+def get_account_campaign_involvement(df_for_analysis, threshold, max_features, time_window_minutes):
+    """
+    Identifies accounts involved in coordinated groups across multiple campaign phrases.
+    Now correctly passes parameters for coordination analysis.
+    """
+    account_campaigns = {}
+    for phrase in PHRASES_TO_TRACK:
+        posts_with_phrase = df_for_analysis[df_for_analysis['object_id'].str.contains(phrase, case=False, na=False)].copy()
+        
+        if not posts_with_phrase.empty:
+            df_clustered_phrase = cached_clustering(posts_with_phrase, eps=0.4, min_samples=2, max_features=max_features, data_source=f"phrase_{phrase}")
+            
+            # FIX: Call find_coordinated_groups with all required parameters
+            coordinated_groups = find_coordinated_groups(df_clustered_phrase, threshold, max_features, time_window_minutes)
+            
+            if coordinated_groups:
+                for group in coordinated_groups:
+                    for post in group['posts']:
+                        account_id = post['account_id']
+                        if account_id not in account_campaigns:
+                            account_campaigns[account_id] = set()
+                        account_campaigns[account_id].add(phrase)
+    
+    multi_campaign_accounts = []
+    for account, phrases in account_campaigns.items():
+        if len(phrases) > 1:
+            multi_campaign_accounts.append({
+                "Account": account,
+                "Campaigns Involved": len(phrases),
+                "Phrases Used": ', '.join(sorted(list(phrases)))
+            })
+    
+    return pd.DataFrame(multi_campaign_accounts)
+
 # --- Cached Functions ---
 @st.cache_data(show_spinner="🔍 Finding coordinated posts within clusters...")
 def cached_find_coordinated_groups(_df, threshold, max_features, time_window_minutes, data_source="default"):
@@ -741,15 +775,22 @@ with tab2:
                                   help="Posts must have a similarity score above this to be considered coordinated.")
         
         # NEW: Time-based coordination feature
-        time_window_minutes = st.slider("Max Time Difference (Minutes)", min_value=1, max_value=120, value=10, step=1,
+        time_window_minutes = st.slider("Max Time Difference for 'Strong' Coordination (Minutes)", min_value=1, max_value=120, value=10, step=1,
                                         help="Only consider posts coordinated if they are published within this time window of each other.")
         
-        # FIX: The max_features slider is now moved here, outside the 'if run_analysis' block
+        # FIX: max_features is now outside the if block
         max_features = st.slider("Max TF-IDF Features", min_value=100, max_value=10000, value=5000, step=100,
                                  help="Limits the vocabulary size for text vectorization. Helps with performance and noise reduction.")
         
         run_analysis = st.button("Run Coordination Analysis")
         
+        # Store analysis parameters in session state for other tabs to use
+        st.session_state.eps = eps
+        st.session_state.min_samples = min_samples
+        st.session_state.threshold = threshold
+        st.session_state.time_window_minutes = time_window_minutes
+        st.session_state.max_features = max_features
+
         if 'coordinated_groups' not in st.session_state:
             st.session_state.coordinated_groups = []
 
@@ -803,7 +844,8 @@ with tab2:
                         st.info("No coordinated groups found with the current parameters.")
                 else:
                     st.error("Clustering failed. Please check your data or parameters.")
-                    
+
+
 # ==================== TAB 3: Network Graph ====================
 with tab3:
     st.subheader("🌐 Network Graph")
@@ -853,8 +895,11 @@ with tab3:
                 if df_for_graph_filtered.empty:
                     st.warning(f"No posts found for the selected phrase: '{phrase_to_filter}'. Please try a different filter.")
                 else:
+                    # FIX: Retrieve max_features from session state for consistency
+                    max_features_net = st.session_state.get('max_features', 5000)
+                    
                     if network_mode == "Similar Content":
-                        df_clustered_for_network = cached_clustering(df_for_graph_filtered, eps=0.4, min_samples=3, max_features=5000)
+                        df_clustered_for_network = cached_clustering(df_for_graph_filtered, eps=0.4, min_samples=3, max_features=max_features_net)
                         graph, pos, cluster_map = cached_network_graph(df_clustered_for_network, coordination_type="text", data_source="uploaded_data")
                     else: # Shared URLs
                         graph, pos, cluster_map = cached_network_graph(df_for_graph_filtered, coordination_type="url", data_source="uploaded_data")
@@ -949,37 +994,17 @@ with tab4:
         This table identifies accounts that have participated in coordinated groups for more than one distinct campaign narrative (e.g., using different key phrases). These accounts may be of particular interest for further investigation.
     """)
     
-    def get_account_campaign_involvement(df_for_analysis):
-        account_campaigns = {}
-        for phrase in PHRASES_TO_TRACK:
-            posts_with_phrase = df_for_analysis[df_for_analysis['object_id'].str.contains(phrase, case=False, na=False)].copy()
-            
-            if not posts_with_phrase.empty:
-                df_clustered_phrase = cached_clustering(posts_with_phrase, eps=0.4, min_samples=2, max_features=5000)
-                coordinated_groups = cached_find_coordinated_groups(df_clustered_phrase, threshold=0.8, max_features=5000, time_window_minutes=60)
-                
-                if coordinated_groups:
-                    for group in coordinated_groups:
-                        for post in group['posts']:
-                            account_id = post['account_id']
-                            if account_id not in account_campaigns:
-                                account_campaigns[account_id] = set()
-                            account_campaigns[account_id].add(phrase)
-        
-        multi_campaign_accounts = []
-        for account, phrases in account_campaigns.items():
-            if len(phrases) > 1:
-                multi_campaign_accounts.append({
-                    "Account": account,
-                    "Campaigns Involved": len(phrases),
-                    "Phrases Used": ', '.join(sorted(list(phrases)))
-                })
-        
-        return pd.DataFrame(multi_campaign_accounts)
+    # Retrieve parameters from the Analysis tab for consistency
+    eps = st.session_state.get('eps', 0.4)
+    min_samples = st.session_state.get('min_samples', 3)
+    threshold = st.session_state.get('threshold', 0.8)
+    time_window_minutes = st.session_state.get('time_window_minutes', 10)
+    max_features = st.session_state.get('max_features', 5000)
 
     if st.button("Analyze Account Overlap in Campaigns"):
         with st.spinner("⏳ Analyzing accounts..."):
-            campaign_overlap_df = get_account_campaign_involvement(df_for_analysis)
+            # FIX: Pass the required parameters to the helper function
+            campaign_overlap_df = get_account_campaign_involvement(df_for_analysis, threshold, max_features, time_window_minutes)
             
             if not campaign_overlap_df.empty:
                 st.info(f"✨ Found **{len(campaign_overlap_df)}** accounts involved in multiple coordinated campaigns.")
