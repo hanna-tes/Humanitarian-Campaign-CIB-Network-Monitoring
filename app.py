@@ -13,6 +13,7 @@ from itertools import combinations
 import re
 from io import StringIO
 import tldextract
+from collections import Counter
 
 # --- Set Page Config ---
 st.set_page_config(page_title="Humanitarian Campaign Monitor", layout="wide")
@@ -120,7 +121,7 @@ def parse_timestamp_robust(timestamp):
 
 # --- Combine Multiple Datasets with Flexible Object Column ---
 def combine_social_media_data(
-    meltwater_df,
+    meltwater_dfs,
     civicsignals_df,
     openmeasure_df=None,
     meltwater_object_col='hit sentence',
@@ -139,17 +140,20 @@ def combine_social_media_data(
             return df[col_name_lower]
         return pd.Series([np.nan] * len(df), index=df.index)
 
-    # Process Meltwater
-    if meltwater_df is not None and not meltwater_df.empty:
-        meltwater_df.columns = meltwater_df.columns.str.lower()
-        mw = pd.DataFrame()
-        mw['account_id'] = get_specific_col(meltwater_df, 'influencer')
-        mw['content_id'] = get_specific_col(meltwater_df, 'tweet id')
-        mw['object_id'] = get_specific_col(meltwater_df, meltwater_object_col.lower())
-        mw['original_url'] = get_specific_col(meltwater_df, 'url')
-        mw['timestamp_share'] = get_specific_col(meltwater_df, 'date')
-        mw['source_dataset'] = 'Meltwater'
-        combined_dfs.append(mw)
+    # Process Meltwater (now accepts a list of dataframes)
+    if meltwater_dfs is not None and meltwater_dfs:
+        for mw_df in meltwater_dfs:
+            if mw_df is None or mw_df.empty:
+                continue
+            mw_df.columns = mw_df.columns.str.lower()
+            mw = pd.DataFrame()
+            mw['account_id'] = get_specific_col(mw_df, 'influencer')
+            mw['content_id'] = get_specific_col(mw_df, 'tweet id')
+            mw['object_id'] = get_specific_col(mw_df, meltwater_object_col.lower())
+            mw['original_url'] = get_specific_col(mw_df, 'url')
+            mw['timestamp_share'] = get_specific_col(mw_df, 'date')
+            mw['source_dataset'] = 'Meltwater'
+            combined_dfs.append(mw)
 
     # Process CivicSignals
     if civicsignals_df is not None and not civicsignals_df.empty:
@@ -507,8 +511,7 @@ def read_uploaded_file(uploaded_file, file_name):
         return pd.DataFrame()
 
 # --- Sidebar: Data Source & Coordination Mode ---
-st.sidebar.header("📥 Data Source")
-data_source = st.sidebar.radio("Choose data source:", ("Use Default Datasets", "Upload CSV Files"))
+st.sidebar.header("📥 Data Upload")
 
 # Coordination Mode Selector
 st.sidebar.header("🎯 Coordination Analysis Mode")
@@ -518,81 +521,31 @@ coordination_mode = st.sidebar.radio(
     help="Choose what defines a coordinated action: similar text messages or sharing the same external link."
 )
 
-# Clear cache when mode or source changes
-if 'last_data_source' not in st.session_state or st.session_state.last_data_source != data_source:
-    st.cache_data.clear()
-    st.session_state.last_data_source = data_source
+# Clear cache when mode changes
 if 'last_coordination_mode' not in st.session_state or st.session_state.last_coordination_mode != coordination_mode:
     st.cache_data.clear()
     st.session_state.last_coordination_mode = coordination_mode
 
 combined_raw_df = pd.DataFrame()
 
-# --- Load data automatically based on selection ---
-if data_source == "Use Default Datasets":
-    st.sidebar.info("Using default datasets from GitHub.")
-    
-    @st.cache_data(show_spinner=False)
-    def load_default_data(coordination_mode_param):
-        # Corrected base URL to point directly to the main branch
-        base_url = "https://raw.githubusercontent.com/hanna-tes/Humanitarian-Campaign-CIB-Network-Monitoring/main/"
-        
-        # Corrected URL for the specific file
-        urls = {
-            "meltwater": f"{base_url}3repliesevendotscanbreakthealgorithm.csv"
-        }
-        
-        meltwater_df = pd.DataFrame()
-        civicsignals_df = pd.DataFrame()
-        
-        encodings = ['utf-8', 'utf-16', 'latin1']
-        
-        for key, url in urls.items():
-            df_temp = pd.DataFrame()
-            try:
-                for enc in encodings:
-                    try:
-                        df_temp = pd.read_csv(url, encoding=enc, low_memory=False)
-                        st.sidebar.success(f"✅ {key.capitalize()}: Loaded {len(df_temp)} rows using encoding '{enc}'")
-                        break # Success, move to the next file
-                    except (UnicodeDecodeError, pd.errors.ParserError):
-                        continue # Try the next encoding
-            except Exception as e:
-                st.sidebar.warning(f"⚠️ Failed to load {key}: {e}")
-            
-            if not df_temp.empty:
-                if key == "meltwater": meltwater_df = df_temp
-                elif key == "civicsignals": civicsignals_df = df_temp
-        
-        obj_map = {
-            "meltwater": "hit sentence" if coordination_mode_param == "Text Content" else "url",
-            "civicsignals": "title" if coordination_mode_param == "Text Content" else "url"
-        }
-        return combine_social_media_data(
-            meltwater_df if not meltwater_df.empty else None,
-            civicsignals_df if not civicsignals_df.empty else None,
-            None,
-            meltwater_object_col=obj_map["meltwater"],
-            civicsignals_object_col=obj_map["civicsignals"]
-        )
-    
-    with st.spinner("📥 Loading and combining default datasets..."):
-        combined_raw_df = load_default_data(coordination_mode)
-        
-    if combined_raw_df.empty:
-        st.warning("No data loaded from default datasets.")
-    st.sidebar.success(f"✅ Combined {len(combined_raw_df):,} posts from default datasets.")
+# "Upload CSV Files" mode is now the only mode
+st.sidebar.info("Upload your CSV files below.")
+uploaded_meltwater_files = st.sidebar.file_uploader("Upload Meltwater CSV(s)", type=["csv"], accept_multiple_files=True, key="meltwater_upload")
+uploaded_civicsignals = st.sidebar.file_uploader("Upload CivicSignals CSV", type=["csv"], key="civicsignals_upload")
+uploaded_openmeasure = st.sidebar.file_uploader("Upload Open-Measure CSV", type=["csv"], key="openmeasure_upload")
 
-else: # "Upload CSV Files"
-    st.sidebar.info("Upload your CSV files below.")
-    uploaded_meltwater = st.sidebar.file_uploader("Upload Meltwater CSV", type=["csv"], key="meltwater_upload")
-    uploaded_civicsignals = st.sidebar.file_uploader("Upload CivicSignals CSV", type=["csv"], key="civicsignals_upload")
-    uploaded_openmeasure = st.sidebar.file_uploader("Upload Open-Measure CSV", type=["csv"], key="openmeasure_upload")
-    
-    meltwater_df_upload = read_uploaded_file(uploaded_meltwater, "Meltwater")
-    civicsignals_df_upload = read_uploaded_file(uploaded_civicsignals, "CivicSignals")
-    openmeasure_df_upload = read_uploaded_file(uploaded_openmeasure, "Open-Measure")
+# Process multiple Meltwater files
+meltwater_dfs_upload = []
+if uploaded_meltwater_files:
+    for i, file in enumerate(uploaded_meltwater_files):
+        df_temp = read_uploaded_file(file, f"Meltwater File {i+1}")
+        if not df_temp.empty:
+            meltwater_dfs_upload.append(df_temp)
 
+civicsignals_df_upload = read_uploaded_file(uploaded_civicsignals, "CivicSignals")
+openmeasure_df_upload = read_uploaded_file(uploaded_openmeasure, "Open-Measure")
+
+if meltwater_dfs_upload or not civicsignals_df_upload.empty or not openmeasure_df_upload.empty:
     with st.spinner("📥 Combining uploaded datasets..."):
         obj_map = {
             "meltwater": "hit sentence" if coordination_mode == "Text Content" else "url",
@@ -600,16 +553,18 @@ else: # "Upload CSV Files"
             "openmeasure": "text" if coordination_mode == "Text Content" else "url"
         }
         combined_raw_df = combine_social_media_data(
-            meltwater_df_upload,
+            meltwater_dfs_upload,
             civicsignals_df_upload,
             openmeasure_df_upload,
             meltwater_object_col=obj_map["meltwater"],
             civicsignals_object_col=obj_map["civicsignals"],
             openmeasure_object_col=obj_map["openmeasure"]
         )
-    if combined_raw_df.empty:
-        st.warning("No data loaded from uploaded files.")
-    st.sidebar.success(f"✅ Combined {len(combined_raw_df):,} posts from uploaded datasets.")
+
+if combined_raw_df.empty:
+    st.warning("No data loaded from uploaded files. Please upload at least one CSV file.")
+    st.stop()
+st.sidebar.success(f"✅ Combined {len(combined_raw_df):,} posts from uploaded datasets.")
 
 
 # --- Final Preprocess ---
@@ -784,10 +739,10 @@ with tab2:
         
         if run_analysis:
             with st.spinner("⏳ Running analysis..."):
-                df_clustered = cached_clustering(df_for_analysis, eps, min_samples, max_features, data_source)
+                df_clustered = cached_clustering(df_for_analysis, eps, min_samples, max_features, "uploaded_data")
                 
                 if df_clustered is not None and 'cluster' in df_clustered.columns:
-                    coordinated_groups = cached_find_coordinated_groups(df_clustered, threshold, max_features, data_source)
+                    coordinated_groups = cached_find_coordinated_groups(df_clustered, threshold, max_features, "uploaded_data")
 
                     st.markdown("### 📈 Coordination Summary")
                     total_coordinated_posts = sum(g['num_posts'] for g in coordinated_groups)
@@ -858,9 +813,9 @@ with tab3:
                 if network_mode == "Similar Content":
                     # Pass the correct df for analysis
                     df_for_network = cached_clustering(df_for_analysis, eps=0.4, min_samples=3, max_features=5000)
-                    graph, pos, cluster_map = cached_network_graph(df_for_network, coordination_type="text")
+                    graph, pos, cluster_map = cached_network_graph(df_for_network, coordination_type="text", data_source="uploaded_data")
                 else: # Shared URLs
-                    graph, pos, cluster_map = cached_network_graph(df_for_analysis, coordination_type="url")
+                    graph, pos, cluster_map = cached_network_graph(df_for_analysis, coordination_type="url", data_source="uploaded_data")
 
                 if graph.number_of_nodes() > 0:
                     edge_x = []
@@ -938,4 +893,73 @@ with tab3:
                     st.warning("The network graph could not be generated. There may not be enough coordinated activity to form a network.")
         st.markdown("---")
         st.subheader("⚠️ Emerging Risk Phrases")
-        st.warning("This section of the code is incomplete.")
+        
+        # --- NEW CODE FOR EMERGING RISK PHRASES ---
+        # This section is now complete
+        if 'coordinated_groups' in locals() and coordinated_groups:
+            all_coordinated_phrases = [
+                post['text'] for group in coordinated_groups for post in group['posts']
+                if 'text' in post and coordination_mode == "Text Content"
+            ]
+            if all_coordinated_phrases:
+                word_counts = Counter(" ".join(all_coordinated_phrases).split())
+                
+                # Exclude common stopwords from the count
+                stopwords = st.text_input("Exclude stopwords (comma-separated)", "the, and, a, of, is, with, to, in, for, can, from")
+                stopwords_list = {w.strip() for w in stopwords.lower().split(',')}
+                filtered_word_counts = {word: count for word, count in word_counts.items() if word not in stopwords_list}
+                
+                top_phrases = Counter(filtered_word_counts).most_common(5)
+
+                st.markdown("Here are the top 5 most frequent phrases/words found in coordinated posts. These may indicate key narratives or calls to action.")
+                for phrase, count in top_phrases:
+                    st.markdown(f"- **`{phrase}`** (appears **{count}** times)")
+            else:
+                st.info("No text content found in coordinated groups to analyze for emerging phrases.")
+        else:
+            st.info("No coordinated groups found to analyze for emerging phrases. Please run the analysis in the 'Analysis' tab first.")
+            
+        st.markdown("---")
+        st.subheader("💰 Suspicious Fundraising Analysis")
+        
+        # --- NEW CODE FOR SUSPICIOUS FUNDRAISING ANALYSIS ---
+        # This section is now complete
+        if 'coordinated_groups' in locals() and coordinated_groups:
+            # Step 1: Gather all URLs from coordinated groups
+            all_urls_in_groups = [
+                post['URL'] for group in coordinated_groups for post in group['posts']
+                if 'URL' in post and post['URL'] and post['URL'] != 'nan'
+            ]
+            
+            # Step 2: Identify URLs with fundraising keywords
+            fundraising_keywords = ["donate", "fund", "gofundme", "paypal", "patreon", "venmo", "give", "help"]
+            fundraising_urls = [url for url in all_urls_in_groups if any(kw in url.lower() for kw in fundraising_keywords)]
+            
+            if fundraising_urls:
+                st.info(f"🔎 Found **{len(fundraising_urls)}** posts containing potential fundraising links.")
+                
+                # Step 3: Extract domains and count occurrences
+                def get_domain(url):
+                    extracted = tldextract.extract(url)
+                    return f"{extracted.domain}.{extracted.suffix}" if extracted.domain and extracted.suffix else "Unknown"
+
+                fundraising_domains = pd.DataFrame(fundraising_urls, columns=['url'])
+                fundraising_domains['domain'] = fundraising_domains['url'].apply(get_domain)
+                
+                domain_counts = fundraising_domains['domain'].value_counts()
+                
+                # Step 4: Display the results, highlighting high-frequency, non-official domains
+                st.markdown("##### Top Fundraising Domains in Coordinated Posts")
+                st.warning("🚨 **Warning**: The domains below are flagged for a high frequency of coordinated posts. Investigate their legitimacy.")
+                
+                official_orgs = {"unicef.org", "redcross.org", "doctorswithoutborders.org"} # Example official orgs
+                
+                for domain, count in domain_counts.items():
+                    if domain not in official_orgs:
+                        st.markdown(f"- **`{domain}`** (found in **{count}** coordinated posts)")
+                    else:
+                        st.markdown(f"- `{domain}` (found in **{count}** posts - **Legitimate Organization**)")
+            else:
+                st.info("No fundraising-related URLs were found in coordinated groups.")
+        else:
+            st.info("No coordinated groups found to analyze for suspicious fundraising. Please run the analysis in the 'Analysis' tab first.")
