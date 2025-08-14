@@ -388,13 +388,16 @@ def find_coordinated_groups(df, threshold, max_features):
 def build_user_interaction_graph(df, coordination_type="text"):
     G = nx.Graph()
     influencer_column = 'account_id'
+    
+    # Check if there's any data to build a graph from
+    if df.empty or 'account_id' not in df.columns:
+        return G, {}, {}
 
     if coordination_type == "text":
         if 'cluster' not in df.columns:
             return G, {}, {}
         grouped = df.groupby('cluster')
         for cluster_id, group in grouped:
-            # Only add edges if the cluster involves more than one unique account
             if cluster_id == -1 or len(group[influencer_column].unique()) < 2:
                 for user in group[influencer_column].dropna().unique():
                     if user not in G:
@@ -414,7 +417,6 @@ def build_user_interaction_graph(df, coordination_type="text"):
         for url_shared, group in url_groups:
             if pd.isna(url_shared) or url_shared.strip() == "":
                 continue
-            # Only add edges if the URL is shared by more than one unique account
             users_sharing_url = group[influencer_column].dropna().unique().tolist()
             if len(users_sharing_url) < 2:
                 for user in users_sharing_url:
@@ -436,22 +438,17 @@ def build_user_interaction_graph(df, coordination_type="text"):
         G.nodes[inf]['platform'] = influencer_platform_map.get(inf, 'Unknown')
         if coordination_type == "text":
             clusters = df[df[influencer_column] == inf]['cluster'].dropna()
-            # Assign cluster if available, otherwise -2 for no coordination
             G.nodes[inf]['cluster'] = clusters.mode()[0] if not clusters.empty else -2
         elif coordination_type == "url":
             shared_urls = df[(df[influencer_column] == inf) & df['URL'].notna() & (df['URL'].str.strip() != '')]['URL'].unique()
             G.nodes[inf]['cluster'] = f"SharedURL_Group_{hash(tuple(sorted(shared_urls))) % 100}" if len(shared_urls) > 0 else "NoSharedURL"
 
-    # --- New Logic: Filter nodes by degree centrality before layout ---
     if G.nodes():
         node_degrees = dict(G.degree())
         sorted_nodes = sorted(node_degrees, key=node_degrees.get, reverse=True)
         top_n_nodes = sorted_nodes[:st.session_state.get('max_nodes_to_display', 40)]
         subgraph = G.subgraph(top_n_nodes)
         
-        # --- MODIFIED: Use a different layout for a more organized look ---
-        # Changed from nx.spring_layout to nx.kamada_kawai_layout
-        # Kamada-Kawai layout is often better for aesthetic graphs
         pos = nx.kamada_kawai_layout(subgraph)
         cluster_map = {node: G.nodes[node].get('cluster', -2) for node in subgraph.nodes()}
         return subgraph, pos, cluster_map
@@ -818,9 +815,8 @@ with tab3:
         if run_network:
             with st.spinner("⏳ Generating network graph..."):
                 if network_mode == "Similar Content":
-                    # Pass the correct df for analysis
-                    df_for_network = cached_clustering(df_for_analysis, eps=0.4, min_samples=3, max_features=5000)
-                    graph, pos, cluster_map = cached_network_graph(df_for_network, coordination_type="text", data_source="uploaded_data")
+                    df_clustered_for_network = cached_clustering(df_for_analysis, eps=0.4, min_samples=3, max_features=5000)
+                    graph, pos, cluster_map = cached_network_graph(df_clustered_for_network, coordination_type="text", data_source="uploaded_data")
                 else: # Shared URLs
                     graph, pos, cluster_map = cached_network_graph(df_for_analysis, coordination_type="url", data_source="uploaded_data")
 
@@ -901,43 +897,43 @@ with tab3:
         st.markdown("---")
         st.subheader("💰 Suspicious Fundraising Analysis")
         
-        # --- NEW CODE FOR SUSPICIOUS FUNDRAISING ANALYSIS ---
-        if 'coordinated_groups' in locals() and coordinated_groups:
-            # Step 1: Gather all URLs from coordinated groups
+        # This part of the code needs to be run after a clustering/grouping analysis has been completed.
+        # It relies on the 'coordinated_groups' variable being populated.
+        # We'll use a check to ensure it exists before proceeding.
+        
+        # A simple check to see if the analysis has been run in tab 2.
+        if 'coordinated_groups' not in locals():
+            st.info("Please run the 'Coordination Analysis' in the 'Analysis' tab first to identify coordinated posts.")
+        else:
             all_urls_in_groups = [
                 post['URL'] for group in coordinated_groups for post in group['posts']
                 if 'URL' in post and post['URL'] and post['URL'] != 'nan'
             ]
             
-            # Step 2: Identify URLs with fundraising keywords
             fundraising_keywords = ["donate", "fund", "gofundme", "paypal", "patreon", "venmo", "give", "help"]
-            fundraising_urls = [url for url in all_urls_in_groups if any(kw in url.lower() for kw in fundraising_keywords)]
             
-            if fundraising_urls:
-                st.info(f"🔎 Found **{len(fundraising_urls)}** posts containing potential fundraising links.")
+            fundraising_data = []
+            for url in all_urls_in_groups:
+                if any(kw in url.lower() for kw in fundraising_keywords):
+                    fundraising_data.append(url)
+            
+            if fundraising_data:
+                st.info(f"🔎 Found **{len(fundraising_data)}** posts containing potential fundraising links.")
                 
-                # Step 3: Extract domains and count occurrences
                 def get_domain(url):
                     extracted = tldextract.extract(url)
                     return f"{extracted.domain}.{extracted.suffix}" if extracted.domain and extracted.suffix else "Unknown"
 
-                fundraising_domains = pd.DataFrame(fundraising_urls, columns=['url'])
-                fundraising_domains['domain'] = fundraising_domains['url'].apply(get_domain)
+                fundraising_df = pd.DataFrame(fundraising_data, columns=['URL'])
+                fundraising_df['Domain'] = fundraising_df['URL'].apply(get_domain)
                 
-                domain_counts = fundraising_domains['domain'].value_counts()
+                url_counts = fundraising_df.groupby(['Domain', 'URL']).size().reset_index(name='Times Shared in Coordinated Posts')
+                url_counts = url_counts.sort_values(by='Times Shared in Coordinated Posts', ascending=False)
                 
-                # Step 4: Display the results, highlighting high-frequency, non-official domains
-                st.markdown("##### Top Fundraising Domains in Coordinated Posts")
-                st.warning("🚨 **Warning**: The domains below are flagged for a high frequency of coordinated posts. Investigate their legitimacy.")
+                st.markdown("##### Top Fundraising URLs in Coordinated Posts")
+                st.warning("🚨 **Warning**: The table below shows fundraising links with a high frequency of coordinated posts. Investigate their legitimacy.")
                 
-                official_orgs = {"unicef.org", "redcross.org", "doctorswithoutborders.org"} # Example official orgs
-                
-                for domain, count in domain_counts.items():
-                    if domain not in official_orgs:
-                        st.markdown(f"- **`{domain}`** (found in **{count}** coordinated posts)")
-                    else:
-                        st.markdown(f"- `{domain}` (found in **{count}** posts - **Legitimate Organization**)")
+                st.dataframe(url_counts, use_container_width=True)
+
             else:
                 st.info("No fundraising-related URLs were found in coordinated groups.")
-        else:
-            st.info("No coordinated groups found to analyze for suspicious fundraising. Please run the analysis in the 'Analysis' tab first.")
