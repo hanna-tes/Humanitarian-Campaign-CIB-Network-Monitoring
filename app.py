@@ -115,51 +115,46 @@ def combine_social_media_data(
     civicsignals_object_col='title',
     openmeasure_object_col='text'
 ):
-    """
-    Combines datasets from Meltwater, CivicSignals, and Open-Measure (optional).
-    Allows specification of which column to use as 'object_id' for coordination analysis.
-    Returns timestamp as UNIX integer.
-    """
     combined_dfs = []
 
-    def get_specific_col(df, col_name_lower):
-        if col_name_lower in df.columns:
-            return df[col_name_lower]
-        return pd.Series([np.nan] * len(df), index=df.index)
+    def get_col(df, possible_names, default=None):
+        if df is None or df.empty: return pd.Series([], dtype='object')
+        for name in possible_names:
+            if name.lower() in df.columns.str.lower():
+                col = df.columns[df.columns.str.lower() == name.lower()][0]
+                return df[col]
+        return pd.Series([np.nan] * len(df), index=df.index) if default is None else pd.Series([default] * len(df), index=df.index)
 
     # Process Meltwater
     if meltwater_df is not None and not meltwater_df.empty:
-        meltwater_df.columns = meltwater_df.columns.str.lower()
         mw = pd.DataFrame()
-        mw['account_id'] = get_specific_col(meltwater_df, 'influencer')
-        mw['content_id'] = get_specific_col(meltwater_df, 'tweet id')
-        mw['object_id'] = get_specific_col(meltwater_df, meltwater_object_col.lower())
-        mw['URL'] = get_specific_col(meltwater_df, 'url')
-        mw['timestamp_share'] = get_specific_col(meltwater_df, 'date')
+        mw['account_id'] = get_col(meltwater_df, ['influencer', 'Author', 'author', 'User'], 'Unknown_User')
+        mw['content_id'] = get_col(meltwater_df, ['tweet id', 'Post ID', 'post_id', 'id'], 'Unknown_ID')
+        mw['object_id'] = get_col(meltwater_df, [meltwater_object_col, 'Content', 'content', 'Text'], '')
+        mw['URL'] = get_col(meltwater_df, ['url', 'URL', 'Link', 'link'], '')
+        mw['timestamp_share'] = get_col(meltwater_df, ['date', 'Published Date', 'publish_date', 'Date', 'created_at'], None)
         mw['source_dataset'] = 'Meltwater'
         combined_dfs.append(mw)
 
     # Process CivicSignals
     if civicsignals_df is not None and not civicsignals_df.empty:
-        civicsignals_df.columns = civicsignals_df.columns.str.lower()
         cs = pd.DataFrame()
-        cs['account_id'] = get_specific_col(civicsignals_df, 'media_name')
-        cs['content_id'] = get_specific_col(civicsignals_df, 'stories_id')
-        cs['object_id'] = get_specific_col(civicsignals_df, civicsignals_object_col.lower())
-        cs['URL'] = get_specific_col(civicsignals_df, 'url')
-        cs['timestamp_share'] = get_specific_col(civicsignals_df, 'publish_date')
+        cs['account_id'] = get_col(civicsignals_df, ['media_name', 'Outlet', 'outlet', 'Publisher'], 'Unknown_Outlet')
+        cs['content_id'] = get_col(civicsignals_df, ['stories_id', 'story_id', 'id'], 'Unknown_ID')
+        cs['object_id'] = get_col(civicsignals_df, [civicsignals_object_col, 'title', 'Title'], '')
+        cs['URL'] = get_col(civicsignals_df, ['url', 'URL', 'Story URL'], '')
+        cs['timestamp_share'] = get_col(civicsignals_df, ['publish_date', 'date', 'Date'], None)
         cs['source_dataset'] = 'CivicSignals'
         combined_dfs.append(cs)
 
     # Process Open-Measure
     if openmeasure_df is not None and not openmeasure_df.empty:
-        openmeasure_df.columns = openmeasure_df.columns.str.lower()
         om = pd.DataFrame()
-        om['account_id'] = get_specific_col(openmeasure_df, 'actor_username')
-        om['content_id'] = get_specific_col(openmeasure_df, 'id')
-        om['object_id'] = get_specific_col(openmeasure_df, openmeasure_object_col.lower())
-        om['URL'] = get_specific_col(openmeasure_df, 'url')
-        om['timestamp_share'] = get_specific_col(openmeasure_df, 'created_at')
+        om['account_id'] = get_col(openmeasure_df, ['actor_username', 'username', 'user'], 'Unknown_User')
+        om['content_id'] = get_col(openmeasure_df, ['id', 'post_id'], 'Unknown_ID')
+        om['object_id'] = get_col(openmeasure_df, [openmeasure_object_col, 'text', 'content'], '')
+        om['URL'] = get_col(openmeasure_df, ['url', 'link'], '')
+        om['timestamp_share'] = get_col(openmeasure_df, ['created_at', 'date', 'timestamp'], None)
         om['source_dataset'] = 'OpenMeasure'
         combined_dfs.append(om)
 
@@ -178,7 +173,7 @@ def combine_social_media_data(
     return combined
 
 # --- Final Preprocessing Function ---
-def final_preprocess_and_map_columns(df, coordination_mode="Text Content"):
+def final_preprocess_and_map_columns(df):
     if df.empty:
         return pd.DataFrame()
 
@@ -241,71 +236,25 @@ def find_coordinated_groups(df, threshold, max_features):
         except: continue
     return sorted(groups, key=lambda x: x['num_posts'], reverse=True)
 
-def build_user_interaction_graph(df, coordination_type="text"):
+def build_user_interaction_graph(df):
     G = nx.Graph()
-    influencer_column = 'account_id'
-    if coordination_type == "text":
-        if 'cluster' not in df.columns:
-            return G, {}, {}
-        for cluster_id, group in df[df['cluster'] != -1].groupby('cluster'):
-            users = group[influencer_column].dropna().unique()
-            if len(users) < 2: continue
-            for u1, u2 in combinations(users, 2):
-                if G.has_edge(u1, u2):
-                    G[u1][u2]['weight'] += 1
-                else:
-                    G.add_edge(u1, u2, weight=1)
-    elif coordination_type == "url":
-        if 'URL' not in df.columns:
-            return G, {}, {}
-        url_groups = df.groupby('URL')
-        for url_shared, group in url_groups:
-            if pd.isna(url_shared) or url_shared.strip() == "":
-                continue
-            users_sharing_url = group[influencer_column].dropna().unique().tolist()
-            if len(users_sharing_url) < 2:
-                for user in users_sharing_url:
-                    if user not in G: G.add_node(user)
-                continue
-            for u1, u2 in combinations(users_sharing_url, 2):
-                if G.has_edge(u1, u2):
-                    G[u1][u2]['weight'] += 1
-                else:
-                    G.add_edge(u1, u2, weight=1)
-
-    all_influencers = df[influencer_column].dropna().unique().tolist()
-    influencer_platform_map = df.groupby(influencer_column)['Platform'].apply(
-        lambda x: x.mode().iloc[0] if not x.mode().empty else 'Unknown'
-    ).to_dict()
-
-    for inf in all_influencers:
-        if inf not in G: G.add_node(inf)
-        G.nodes[inf]['platform'] = influencer_platform_map.get(inf, 'Unknown')
-
-    if coordination_type == "text":
-        cluster_map = df.groupby(influencer_column)['cluster'].apply(
-            lambda x: x.mode().iloc[0] if not x.mode().empty else -2
-        ).to_dict()
-        for inf in G.nodes():
-            G.nodes[inf]['cluster'] = cluster_map.get(inf, -2)
-    elif coordination_type == "url":
-        url_map = df.groupby(influencer_column)['URL'].apply(
-            lambda x: x.mode().iloc[0] if not x.mode().empty else 'Unknown'
-        ).to_dict()
-        for inf in G.nodes():
-            G.nodes[inf]['url'] = url_map.get(inf, 'Unknown')
-
+    if 'cluster' not in df.columns:
+        return G, {}, {}
+    for cluster_id, group in df[df['cluster'] != -1].groupby('cluster'):
+        users = group['account_id'].dropna().unique()
+        if len(users) < 2: continue
+        for u1, u2 in combinations(users, 2):
+            if G.has_edge(u1, u2):
+                G[u1][u2]['weight'] += 1
+            else:
+                G.add_edge(u1, u2, weight=1)
+    all_users = df['account_id'].dropna().unique()
+    for user in all_users:
+        if user not in G: G.add_node(user)
     if not G.nodes(): return G, {}, {}
-
     pos = nx.kamada_kawai_layout(G)
-    color_map = {}
-    for node in G.nodes():
-        if coordination_type == "text":
-            color_map[node] = G.nodes[node].get('cluster', -2)
-        else:
-            color_map[node] = hash(G.nodes[node].get('url', 'Unknown')) % 100
-
-    return G, pos, color_map
+    cluster_map = df.groupby('account_id')['cluster'].apply(lambda x: x.mode().iloc[0] if not x.mode().empty else -2).to_dict()
+    return G, pos, cluster_map
 
 # --- Caching ---
 @st.cache_data
@@ -313,9 +262,9 @@ def cached_clustering(_df, eps, min_samples, max_features): return cluster_texts
 @st.cache_data
 def cached_find_coordinated_groups(_df, threshold, max_features): return find_coordinated_groups(_df, threshold, max_features)
 @st.cache_data
-def cached_network_graph(_df, coordination_type): return build_user_interaction_graph(_df, coordination_type)
+def cached_network_graph(_df): return build_user_interaction_graph(_df)
 
-# --- Auto-Encoding CSV Reader ---
+# --- Auto-Encoding CSV Reader (Matches Your Working CIB Dashboard) ---
 def read_uploaded_file(uploaded_file, file_name):
     if not uploaded_file:
         return pd.DataFrame()
@@ -353,9 +302,9 @@ if data_source == "Use Default Dataset":
     st.sidebar.info("Using default humanitarian dataset from GitHub.")
     with st.spinner("📥 Loading default dataset..."):
         base_url = "https://raw.githubusercontent.com/hanna-tes/Humanitarian-Campaign-CIB-Network-Monitoring/refs/heads/main/"
-        default_url = f"{base_url}3_replies_%E2%80%94_even_dots_%E2%80%94_can_break_the_algorithm_AN%20-%20Aug%2013%2C%202025%20-%2010%2037%2011%20AM.csv"  # Replace with your actual humanitarian dataset
+        default_url = f"{base_url}3_replies_%E2%80%94_even_dots_%E2%80%94_can_break_the_algorithm_AN%20-%20Aug%2013%2C%202025%20-%2010%2037%2011%20AM.csv"
         try:
-            meltwater_df_default = pd.read_csv(default_url, sep=' ')
+            meltwater_df_default = pd.read_csv(default_url, sep=' ', encoding='utf-16le')
             st.sidebar.success(f"✅ Default dataset loaded: {len(meltwater_df_default)} rows")
         except Exception as e:
             st.sidebar.error(f"❌ Failed to load default dataset: {e}")
@@ -432,7 +381,7 @@ if 'df' not in st.session_state:
 
 if not st.session_state.combined_raw_df.empty and st.sidebar.button("🧹 Preprocess Data"):
     with st.spinner("🧹 Preprocessing data..."):
-        st.session_state.df = final_preprocess_and_map_columns(st.session_state.combined_raw_df, coordination_mode=coordination_mode)
+        st.session_state.df = final_preprocess_and_map_columns(st.session_state.combined_raw_df)
     if st.session_state.df.empty:
         st.error("❌ No valid data after preprocessing.")
     else:
@@ -518,6 +467,8 @@ with tab1:
             platform_counts = st.session_state.df['Platform'].value_counts()
             fig_platform = px.pie(platform_counts, names=platform_counts.index, values='Platform', title="Posts by Platform")
             st.plotly_chart(fig_platform, use_container_width=True)
+    else:
+        st.info("Upload and preprocess data to see overview.")
 
 # ==================== TAB 2: Analysis ====================
 with tab2:
@@ -603,7 +554,7 @@ with tab3:
 
     if st.button("Build Network Graph") and not df_for_analysis.empty:
         with st.spinner("Building network..."):
-            G, pos, color_map = cached_network_graph(df_for_analysis, coordination_type="text" if coordination_mode == "Text Content" else "url")
+            G, pos, cluster_map = cached_network_graph(df_for_analysis)
 
         if not G.nodes():
             st.warning("No coordinated activity detected.")
@@ -625,7 +576,7 @@ with tab3:
                 deg = subgraph.degree(node)
                 platform = subgraph.nodes[node].get('platform', 'Unknown')
                 node_text.append(f"{node}<br>deg: {deg} • {platform}")
-                node_color.append(color_map.get(node, -2))
+                node_color.append(cluster_map.get(node, -2))
 
             node_trace = go.Scatter(x=node_x, y=node_y, mode='markers', hoverinfo='text', text=node_text,
                                   marker=dict(size=[subgraph.degree(n)*3 + 10 for n in subgraph.nodes()],
