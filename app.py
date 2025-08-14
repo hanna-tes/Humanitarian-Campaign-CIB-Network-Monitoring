@@ -405,7 +405,7 @@ def build_user_interaction_graph(df, coordination_type="text"):
     if df.empty or 'account_id' not in df.columns:
         return G, {}, {}
 
-    if coordination__type == "text":
+    if coordination_type == "text":
         if 'cluster' not in df.columns:
             return G, {}, {}
         grouped = df.groupby('cluster')
