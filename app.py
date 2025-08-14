@@ -100,7 +100,7 @@ def combine_social_media_data(
         mw['URL'] = get_col(meltwater_df, ['url', 'URL', 'Link', 'link'], '')
         mw['timestamp_share'] = get_col(meltwater_df, ['date', 'Published Date', 'publish_date', 'Date', 'created_at'], None)
         
-        # --- FIX: Conditional assignment of object_id based on mode ---
+        # --- Conditional assignment of object_id based on mode ---
         if coordination_mode == "Text Content":
             mw['object_id'] = get_col(meltwater_df, ['hit sentence', 'Content', 'content', 'Text'], '')
         else: # Shared URLs
@@ -117,7 +117,7 @@ def combine_social_media_data(
         cs['URL'] = get_col(civicsignals_df, ['url', 'URL', 'Story URL'], '')
         cs['timestamp_share'] = get_col(civicsignals_df, ['publish_date', 'date', 'Date'], None)
 
-        # --- FIX: Conditional assignment of object_id based on mode ---
+        # --- Conditional assignment of object_id based on mode ---
         if coordination_mode == "Text Content":
             cs['object_id'] = get_col(civicsignals_df, ['title', 'Title'], '')
         else: # Shared URLs
@@ -134,7 +134,7 @@ def combine_social_media_data(
         om['URL'] = get_col(openmeasure_df, ['url', 'link'], '')
         om['timestamp_share'] = get_col(openmeasure_df, ['created_at', 'date', 'timestamp'], None)
 
-        # --- FIX: Conditional assignment of object_id based on mode ---
+        # --- Conditional assignment of object_id based on mode ---
         if coordination_mode == "Text Content":
             om['object_id'] = get_col(openmeasure_df, ['text', 'content'], '')
         else: # Shared URLs
@@ -268,8 +268,16 @@ def read_uploaded_file(uploaded_file, file_name):
     if decoded_content is None:
         st.error(f"❌ Failed to read {file_name} CSV: Could not decode with any supported encoding.")
         return pd.DataFrame()
+    
+    # Check for the separator
     sample_line = decoded_content.strip().splitlines()[0]
-    sep = '\t' if '\t' in sample_line else ' ' if ' ' in sample_line else ','
+    # This logic assumes space, tab, or comma. Let's add an explicit check for the default case first.
+    sep = ' '
+    if '\t' in sample_line:
+        sep = '\t'
+    elif ',' in sample_line:
+        sep = ','
+
     try:
         df = pd.read_csv(StringIO(decoded_content), sep=sep, on_bad_lines='skip', low_memory=False)
         st.sidebar.success(f"✅ {file_name}: Loaded {len(df)} rows (sep='{sep}', enc='{detected_enc}')")
@@ -289,9 +297,23 @@ if data_source == "Use Default Dataset":
         base_url = "https://raw.githubusercontent.com/hanna-tes/Humanitarian-Campaign-CIB-Network-Monitoring/refs/heads/main/"
         default_url = f"{base_url}3_replies_%E2%80%94_even_dots_%E2%80%94_can_break_the_algorithm_AN%20-%20Aug%2013%2C%202025%20-%2010%2037%2011%20AM.csv"
         try:
-            # --- FIX: No need to use the robust reader, just use a standard read with specified params ---
-            meltwater_df_default = pd.read_csv(default_url, sep=' ', encoding='utf-16le')
-            st.sidebar.success(f"✅ Default dataset loaded: {len(meltwater_df_default)} rows")
+            # We must load the content first and then pass it to the robust reader
+            import requests
+            response = requests.get(default_url)
+            response.raise_for_status() # Check for HTTP errors
+            
+            # Create a file-like object from the downloaded content
+            file_obj = StringIO(response.text)
+            
+            # Use the robust reader to parse the default file
+            df_temp = read_uploaded_file(file_obj, "Default Dataset")
+            if not df_temp.empty:
+                meltwater_df_default = df_temp
+                st.sidebar.success(f"✅ Default dataset loaded: {len(meltwater_df_default)} rows")
+            else:
+                meltwater_df_default = pd.DataFrame()
+                st.sidebar.error("❌ Failed to parse the default dataset.")
+
         except Exception as e:
             st.sidebar.error(f"❌ Failed to load default dataset: {e}")
             meltwater_df_default = pd.DataFrame()
@@ -343,7 +365,6 @@ if st.sidebar.button("🔄 Load & Combine Data"):
         if not dfs:
             st.error("❌ No files uploaded or all failed to load.")
         else:
-            # --- FIX: Pass coordination_mode directly to the combine function ---
             st.session_state.combined_raw_df = combine_social_media_data(
                 meltwater_df=pd.concat([d for d in dfs if 'influencer' in d.columns], ignore_index=True) if any('influencer' in d.columns for d in dfs) else None,
                 civicsignals_df=next((d for d in dfs if 'media_name' in d.columns), None),
@@ -472,10 +493,8 @@ with tab2:
                     posts = g["posts"]
                     for i in range(len(posts)):
                         for j in range(i+1, len(posts)):
-                            # --- FIX: This block has an error in original code, fixing it to be more robust. ---
                             vectorizer = TfidfVectorizer(stop_words='english')
                             try:
-                                # Ensure we don't try to calculate similarity on empty or identical texts
                                 text1 = posts[i]['Text']
                                 text2 = posts[j]['Text']
                                 if text1 and text2 and text1 != text2:
@@ -564,7 +583,6 @@ with tab3:
             for node in subgraph.nodes():
                 x, y = pos_filtered[node]; node_x.append(x); node_y.append(y)
                 deg = subgraph.degree(node)
-                # --- FIX: Ensure 'platform' is in node attributes before trying to access it ---
                 platform = df_for_analysis[df_for_analysis['account_id'] == node]['Platform'].mode().iloc[0] if not df_for_analysis[df_for_analysis['account_id'] == node]['Platform'].mode().empty else 'Unknown'
                 node_text.append(f"{node}<br>deg: {deg} • {platform}")
                 node_color.append(cluster_map.get(node, -2))
