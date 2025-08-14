@@ -534,10 +534,12 @@ if data_source == "Use Default Datasets":
     
     @st.cache_data(show_spinner=False)
     def load_default_data(coordination_mode_param):
-        base_url = "https://raw.githubusercontent.com/hanna-tes/Humanitarian-Campaign-CIB-Network-Monitoring/refs/heads/main/"
+        # Corrected base URL to point directly to the main branch
+        base_url = "https://raw.githubusercontent.com/hanna-tes/Humanitarian-Campaign-CIB-Network-Monitoring/main/"
+        
+        # Corrected URL for the specific file
         urls = {
-            "meltwater": f"{base_url}3_replies_%E2%80%94_even_dots_%E2%80%94_can_break_the_algorithm.csv",
-            #"civicsignals": f"{base_url}togo-or-lome-or-togo-all-story-urls-20250707142808.csv"
+            "meltwater": f"{base_url}3_replies_%E2%80%94_even_dots_%E2%80%94_can_break_the_algorithm.csv"
         }
         
         meltwater_df = pd.DataFrame()
@@ -615,7 +617,7 @@ with st.spinner("⏳ Preprocessing and mapping combined data..."):
     df = final_preprocess_and_map_columns(combined_raw_df, coordination_mode=coordination_mode)
 
 if df.empty:
-    st.warning("No valid data after final preprocessing. Please check your data source and file names.")
+    st.warning("No valid data after final preprocessing. Please adjust the filters or check your data source.")
     st.stop()
 
 
@@ -791,13 +793,24 @@ with tab2:
                     total_coordinated_posts = sum(g['num_posts'] for g in coordinated_groups)
                     total_coordinated_accounts = sum(g['num_accounts'] for g in coordinated_groups)
                     
-                    st.metric("Coordinated Groups Found", len(coordinated_groups))
-                    st.metric("Total Posts in Coordinated Groups", total_coordinated_posts)
-                    st.metric("Total Unique Accounts in Coordinated Groups", total_coordinated_accounts)
+                    # --- NEW: Visually appealing metrics ---
+                    col_met1, col_met2, col_met3 = st.columns(3)
+                    with col_met1:
+                        st.metric("Coordinated Groups Found", len(coordinated_groups), help="Total number of unique coordinated groups identified.")
+                    with col_met2:
+                        st.metric("Posts in Groups", total_coordinated_posts, help="Total number of posts that are part of a coordinated group.")
+                    with col_met3:
+                        st.metric("Accounts in Groups", total_coordinated_accounts, help="Total number of unique accounts participating in coordinated groups.")
+                    
+                    st.info(f"✨ Found **{len(coordinated_groups):,}** coordinated groups with a total of **{total_coordinated_posts:,}** posts from **{total_coordinated_accounts:,}** unique accounts.")
 
                     if coordinated_groups:
-                        st.markdown("### 📊 Top Coordinated Groups")
-                        for i, group in enumerate(sorted(coordinated_groups, key=lambda x: x['num_posts'], reverse=True)):
+                        st.markdown("### 📊 Top 10 Coordinated Groups")
+                        
+                        # --- MODIFIED: Limit to top 10 groups and add a unique key to the chart ---
+                        top_groups = sorted(coordinated_groups, key=lambda x: x['num_posts'], reverse=True)[:10]
+
+                        for i, group in enumerate(top_groups):
                             with st.expander(f"Group {i+1}: {group['num_posts']} Posts ({group['coordination_type']}) - Max Sim: {group['max_similarity_score']}"):
                                 group_df = pd.DataFrame(group['posts'])
                                 st.dataframe(group_df[['account_id', 'text', 'URL', 'Platform']].head(10), use_container_width=True)
@@ -807,7 +820,9 @@ with tab2:
                                 group_df['Date'] = group_df['Timestamp'].dt.date
                                 timeline = group_df.groupby('Date').size().reset_index(name='count')
                                 fig = px.line(timeline, x='Date', y='count', title="Posts per Day for this Group")
-                                st.plotly_chart(fig, use_container_width=True)
+                                
+                                # --- FIX: ADD A UNIQUE KEY HERE ---
+                                st.plotly_chart(fig, use_container_width=True, key=f"group_chart_{i}")
                     else:
                         st.info("No coordinated groups found with the current parameters.")
                 else:
