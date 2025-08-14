@@ -910,6 +910,53 @@ with tab3:
                         st.plotly_chart(fig, use_container_width=True)
                     else:
                         st.warning("The network graph could not be generated. There may not be enough coordinated activity to form a network with the current filters.")
+        
+        # --- NEW SECTION: Accounts in Multiple Coordinated Messages ---
+        st.markdown("---")
+        st.subheader("👤 Accounts Involved in Multiple Coordinated Campaigns")
+        
+        def get_account_campaign_involvement(df_for_analysis):
+            account_campaigns = {}
+            for phrase in PHRASES_TO_TRACK:
+                # Find all posts containing the phrase, case-insensitively
+                posts_with_phrase = df_for_analysis[df_for_analysis['object_id'].str.contains(phrase, case=False, na=False)].copy()
+                
+                if not posts_with_phrase.empty:
+                    # Find coordinated groups within these posts
+                    # Note: Using cached_clustering here is important to use the same logic as the main analysis
+                    df_clustered_phrase = cached_clustering(posts_with_phrase, eps=0.4, min_samples=2, max_features=5000)
+                    coordinated_groups = cached_find_coordinated_groups(df_clustered_phrase, threshold=0.8, max_features=5000)
+                    
+                    if coordinated_groups:
+                        for group in coordinated_groups:
+                            for post in group['posts']:
+                                account_id = post['account_id']
+                                if account_id not in account_campaigns:
+                                    account_campaigns[account_id] = set()
+                                account_campaigns[account_id].add(phrase)
+            
+            multi_campaign_accounts = []
+            for account, phrases in account_campaigns.items():
+                if len(phrases) > 1:
+                    multi_campaign_accounts.append({
+                        "Account": account,
+                        "Campaigns Involved": len(phrases),
+                        "Phrases Used": ', '.join(sorted(list(phrases)))
+                    })
+            
+            return pd.DataFrame(multi_campaign_accounts)
+
+        if st.button("Analyze Account Overlap in Campaigns"):
+            with st.spinner("⏳ Analyzing accounts..."):
+                campaign_overlap_df = get_account_campaign_involvement(df_for_analysis)
+                
+                if not campaign_overlap_df.empty:
+                    st.info(f"✨ Found **{len(campaign_overlap_df)}** accounts involved in multiple coordinated campaigns.")
+                    st.dataframe(campaign_overlap_df.sort_values("Campaigns Involved", ascending=False), use_container_width=True)
+                else:
+                    st.info("No accounts were found to be involved in multiple coordinated campaigns with the current filters.")
+        # --- END NEW SECTION ---
+
         st.markdown("---")
         st.subheader("💰 Suspicious Fundraising Analysis")
         
