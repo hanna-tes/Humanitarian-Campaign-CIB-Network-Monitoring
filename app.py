@@ -55,6 +55,14 @@ def infer_platform_from_url(url):
     else:
         return "Unknown"
 
+# NEW function to extract URLs from text
+def extract_urls_from_text(text):
+    """Extracts all URLs from a given text string."""
+    if pd.isna(text) or not isinstance(text, str):
+        return []
+    url_pattern = re.compile(r'https?://[^\s<>"]+|www\.[^\s<>"]+')
+    return url_pattern.findall(text)
+
 def extract_original_text(text):
     """
     Cleans text by removing RT/QT prefixes, @mentions, URLs, and normalizing spaces.
@@ -64,6 +72,7 @@ def extract_original_text(text):
         return ""
     cleaned = re.sub(r'^(RT|rt|QT|qt)\s+@\w+:\s*', '', text, flags=re.IGNORECASE).strip()
     cleaned = re.sub(r'@\w+', '', cleaned).strip()
+    # Now, only remove URLs if they are NOT the subject of analysis
     cleaned = re.sub(r'http\S+|www\S+|https\S+', '', cleaned).strip()
     
     # --- NEW: Remove dates, years, and common month names ---
@@ -219,28 +228,26 @@ def final_preprocess_and_map_columns(df, coordination_mode="Text Content"):
         df_processed['timestamp_share'] = pd.Series([], dtype='Int64')
         return df_processed
     
-    df_processed.rename(columns={'original_url': 'URL'}, inplace=True)
+    # NEW: Extract all URLs from the text and create a unified 'URL' column
+    df_processed['all_urls_in_text'] = df_processed['object_id'].apply(extract_urls_from_text)
+    # Use the 'original_url' column as the main 'URL' column for downstream tasks
+    # Fallback to the first URL found in text if original_url is missing
+    df_processed['URL'] = df_processed['original_url'].fillna(df_processed['all_urls_in_text'].apply(lambda x: x[0] if x else None))
+
     df_processed['object_id'] = df_processed['object_id'].astype(str).replace('nan', '').fillna('')
     df_processed = df_processed[df_processed['object_id'].str.strip() != ""].copy()
 
     def clean_text_for_display(text):
         if not isinstance(text, str): return ""
-        text = re.sub(r'http\S+|www\S+|https\S+', '', text)
         text = re.sub(r"\\n|\\r|\\t", " ", text)
         text = re.sub(r'\s+', ' ', text).strip().lower()
         return text
 
     if coordination_mode == "Text Content":
-        df_processed['object_id'] = df_processed['object_id'].apply(clean_text_for_display)
-        df_processed = df_processed[df_processed['object_id'].str.len() > 0].reset_index(drop=True)
-        df_processed = df_processed[
-            ~df_processed['object_id'].str.lower().str.startswith('rt @') &
-            ~df_processed['object_id'].str.lower().str.startswith('qt @')
-        ].reset_index(drop=True)
-
-    if coordination_mode == "Text Content":
         df_processed['original_text'] = df_processed['object_id'].apply(extract_original_text)
     elif coordination_mode == "Shared URLs":
+        # For URL-based analysis, we use the extracted URL itself as the text to cluster on
+        df_processed = df_processed[df_processed['URL'].notna()].copy()
         df_processed['original_text'] = df_processed['URL'].astype(str).replace('nan', '').fillna('')
 
     df_processed = df_processed[df_processed['original_text'].str.strip() != ""].reset_index(drop=True)
@@ -293,36 +300,40 @@ def find_coordinated_groups(df, threshold, max_features):
     
     coordination_groups = {}
     
-    clustered_groups = df[df['cluster'] != -1].groupby('cluster')
+    # We now perform a simpler grouping for URLs
+    if df['original_text'].nunique() > 1 and len(df) > 1:
+        df_clustered = cluster_texts(df, eps=0.4, min_samples=2, max_features=max_features)
+        clustered_groups = df_clustered[df_clustered['cluster'] != -1].groupby('cluster')
+    else:
+        clustered_groups = df.groupby(pd.Series(range(len(df)))) # Treat each post as a single group if there's no clustering possible
     
     for cluster_id, group in clustered_groups:
         if len(group) < 2:
             continue
         
-        # Use TF-IDF for similarity within the small cluster
         clean_df = group[['account_id', 'timestamp_share', 'Platform', 'URL', text_col]].copy()
         clean_df = clean_df.rename(columns={text_col: 'text', 'timestamp_share': 'Timestamp'})
         clean_df = clean_df.reset_index(drop=True)
         
-        vectorizer = TfidfVectorizer(
-            stop_words='english',
-            ngram_range=(3, 5),
-            max_features=max_features
-        )
-        try:
-            tfidf_matrix = vectorizer.fit_transform(clean_df['text'])
-        except Exception:
-            continue
-        
-        cosine_sim = cosine_similarity(tfidf_matrix)
-        
-        # Build an adjacency list for connected components
+        # Build adjacency list
         adj = {i: [] for i in range(len(clean_df))}
-        for i in range(len(clean_df)):
-            for j in range(i + 1, len(clean_df)):
-                if cosine_sim[i, j] >= threshold:
-                    adj[i].append(j)
-                    adj[j].append(i)
+        if len(clean_df) > 1:
+            vectorizer = TfidfVectorizer(
+                stop_words='english',
+                ngram_range=(1, 1),
+                max_features=max_features
+            )
+            try:
+                tfidf_matrix = vectorizer.fit_transform(clean_df['text'])
+                cosine_sim = cosine_similarity(tfidf_matrix)
+            except Exception:
+                continue
+
+            for i in range(len(clean_df)):
+                for j in range(i + 1, len(clean_df)):
+                    if cosine_sim[i, j] >= threshold:
+                        adj[i].append(j)
+                        adj[j].append(i)
                     
         visited = set()
         group_id_counter = 0
@@ -341,27 +352,21 @@ def find_coordinated_groups(df, threshold, max_features):
                             q.append(v)
                 
                 if len(group_indices) > 1:
-                    # Collect all posts in this connected component
                     group_posts = clean_df.iloc[group_indices].copy()
                     
-                    # --- CORE LOGIC FOR AMPLIFICATION: Only consider a group coordinated if there are multiple unique accounts ---
                     if len(group_posts['account_id'].unique()) > 1:
-                        
-                        # Calculate max similarity in the group (for a score)
-                        group_sim_scores = cosine_sim[np.ix_(group_indices, group_indices)]
+                        group_sim_scores = cosine_sim[np.ix_(group_indices, group_indices)] if 'cosine_sim' in locals() else np.array([[0]])
                         max_sim = group_sim_scores.max() if group_sim_scores.size > 0 else 0.0
 
-                        # Assign a unique ID and store the group data
                         coordination_groups[f"group_{group_id_counter}"] = {
                             "posts": group_posts.to_dict('records'),
                             "num_posts": len(group_posts),
                             "num_accounts": len(group_posts['account_id'].unique()),
                             "max_similarity_score": round(max_sim, 3),
-                            "coordination_type": "TBD" # Will be set below
+                            "coordination_type": "TBD"
                         }
                         group_id_counter += 1
 
-    # Now, process groups to determine coordination type
     final_groups = []
     for group_id, group_data in coordination_groups.items():
         posts_df = pd.DataFrame(group_data['posts'])
@@ -389,7 +394,6 @@ def build_user_interaction_graph(df, coordination_type="text"):
     G = nx.Graph()
     influencer_column = 'account_id'
     
-    # Check if there's any data to build a graph from
     if df.empty or 'account_id' not in df.columns:
         return G, {}, {}
 
@@ -766,7 +770,6 @@ with tab2:
                     if coordinated_groups:
                         st.markdown("### 📊 Top 10 Coordinated Groups")
                         
-                        # --- MODIFIED: Limit to top 10 groups and add a unique key to the chart ---
                         top_groups = sorted(coordinated_groups, key=lambda x: x['num_posts'], reverse=True)[:10]
 
                         for i, group in enumerate(top_groups):
@@ -780,7 +783,6 @@ with tab2:
                                 timeline = group_df.groupby('Date').size().reset_index(name='count')
                                 fig = px.line(timeline, x='Date', y='count', title="Posts per Day for this Group")
                                 
-                                # --- FIX: ADD A UNIQUE KEY HERE ---
                                 st.plotly_chart(fig, use_container_width=True, key=f"group_chart_{i}")
                     else:
                         st.info("No coordinated groups found with the current parameters.")
@@ -901,14 +903,19 @@ with tab3:
         # It relies on the 'coordinated_groups' variable being populated.
         # We'll use a check to ensure it exists before proceeding.
         
-        # A simple check to see if the analysis has been run in tab 2.
         if 'coordinated_groups' not in locals():
             st.info("Please run the 'Coordination Analysis' in the 'Analysis' tab first to identify coordinated posts.")
         else:
-            all_urls_in_groups = [
-                post['URL'] for group in coordinated_groups for post in group['posts']
-                if 'URL' in post and post['URL'] and post['URL'] != 'nan'
-            ]
+            # We now iterate through ALL URLs, not just from a dedicated column
+            all_urls_in_groups = []
+            for group in coordinated_groups:
+                for post in group['posts']:
+                    # Use the new list of all extracted URLs
+                    if 'all_urls_in_text' in post and post['all_urls_in_text']:
+                        all_urls_in_groups.extend(post['all_urls_in_text'])
+                    # Also check the dedicated URL column as a fallback
+                    elif 'URL' in post and post['URL'] and post['URL'] != 'nan':
+                        all_urls_in_groups.append(post['URL'])
             
             fundraising_keywords = ["donate", "fund", "gofundme", "paypal", "patreon", "venmo", "give", "help"]
             
