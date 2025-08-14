@@ -741,8 +741,12 @@ with tab2:
                                   help="Posts must have a similarity score above this to be considered coordinated.")
         
         # NEW: Time-based coordination feature
-        time_window_minutes = st.slider("Max Time Difference for 'Strong' Coordination (Minutes)", min_value=1, max_value=120, value=10, step=1,
+        time_window_minutes = st.slider("Max Time Difference (Minutes)", min_value=1, max_value=120, value=10, step=1,
                                         help="Only consider posts coordinated if they are published within this time window of each other.")
+        
+        # FIX: The max_features slider is now moved here, outside the 'if run_analysis' block
+        max_features = st.slider("Max TF-IDF Features", min_value=100, max_value=10000, value=5000, step=100,
+                                 help="Limits the vocabulary size for text vectorization. Helps with performance and noise reduction.")
         
         run_analysis = st.button("Run Coordination Analysis")
         
@@ -754,7 +758,6 @@ with tab2:
                 df_clustered = cached_clustering(df_for_analysis, eps, min_samples, max_features, "uploaded_data")
                 
                 if df_clustered is not None and 'cluster' in df_clustered.columns:
-                    # Pass the new time_window_minutes parameter
                     coordinated_groups = cached_find_coordinated_groups(df_clustered, threshold, max_features, time_window_minutes, "uploaded_data")
                     st.session_state.coordinated_groups = coordinated_groups
 
