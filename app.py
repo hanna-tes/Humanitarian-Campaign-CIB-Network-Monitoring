@@ -249,7 +249,7 @@ def cached_find_coordinated_groups(_df, threshold, max_features): return find_co
 @st.cache_data
 def cached_network_graph(_df): return build_user_interaction_graph(_df)
 
-# --- Auto-Encoding CSV Reader (Matches Your Working CIB Dashboard) ---
+# --- Auto-Encoding CSV Reader for Uploaded Files ---
 def read_uploaded_file(uploaded_file, file_name):
     if not uploaded_file:
         return pd.DataFrame()
@@ -269,17 +269,13 @@ def read_uploaded_file(uploaded_file, file_name):
         st.error(f"❌ Failed to read {file_name} CSV: Could not decode with any supported encoding.")
         return pd.DataFrame()
     
-    # Check for the separator
     sample_line = decoded_content.strip().splitlines()[0]
-    # This logic assumes space, tab, or comma. Let's add an explicit check for the default case first.
-    sep = ' '
-    if '\t' in sample_line:
-        sep = '\t'
-    elif ',' in sample_line:
-        sep = ','
-
+    sep = '\t' if '\t' in sample_line else ','
+    if sep == ',' and ' ' in sample_line: # A heuristic for space-separated files
+        sep = ' '
+    
     try:
-        df = pd.read_csv(StringIO(decoded_content), sep=sep, on_bad_lines='skip', low_memory=False)
+        df = pd.read_csv(StringIO(decoded_content), sep=sep, on_bad_lines='skip', low_memory=False, encoding=detected_enc)
         st.sidebar.success(f"✅ {file_name}: Loaded {len(df)} rows (sep='{sep}', enc='{detected_enc}')")
         return df
     except Exception as e:
@@ -291,34 +287,21 @@ st.sidebar.header("📥 Data Source")
 data_source = st.sidebar.radio("Choose data source:", ["Upload Files", "Use Default Dataset"])
 
 # --- Load Default Dataset ---
+# This block is now more direct and robust for the default file's known format
 if data_source == "Use Default Dataset":
     st.sidebar.info("Using default humanitarian dataset from GitHub.")
     with st.spinner("📥 Loading default dataset..."):
         base_url = "https://raw.githubusercontent.com/hanna-tes/Humanitarian-Campaign-CIB-Network-Monitoring/refs/heads/main/"
         default_url = f"{base_url}3_replies_%E2%80%94_even_dots_%E2%80%94_can_break_the_algorithm_AN%20-%20Aug%2013%2C%202025%20-%2010%2037%2011%20AM.csv"
         try:
-            # We must load the content first and then pass it to the robust reader
-            import requests
-            response = requests.get(default_url)
-            response.raise_for_status() # Check for HTTP errors
-            
-            # Create a file-like object from the downloaded content
-            file_obj = StringIO(response.text)
-            
-            # Use the robust reader to parse the default file
-            df_temp = read_uploaded_file(file_obj, "Default Dataset")
-            if not df_temp.empty:
-                meltwater_df_default = df_temp
-                st.sidebar.success(f"✅ Default dataset loaded: {len(meltwater_df_default)} rows")
-            else:
-                meltwater_df_default = pd.DataFrame()
-                st.sidebar.error("❌ Failed to parse the default dataset.")
-
+            meltwater_df_default = pd.read_csv(default_url, sep='\t', encoding='utf-16le')
+            st.sidebar.success(f"✅ Default dataset loaded: {len(meltwater_df_default)} rows")
         except Exception as e:
-            st.sidebar.error(f"❌ Failed to load default dataset: {e}")
+            st.sidebar.error(f"❌ Failed to load default dataset: {e}. Check the file format.")
             meltwater_df_default = pd.DataFrame()
     uploaded_meltwater_files = None
 else:
+    meltwater_df_default = pd.DataFrame()
     uploaded_meltwater_files = st.sidebar.file_uploader("Upload Meltwater CSV(s)", type="csv", accept_multiple_files=True, key="meltwater_uploads")
 
 uploaded_civicsignals = st.sidebar.file_uploader("Upload CivicSignals CSV", type="csv", key="civicsignals_upload")
@@ -340,7 +323,7 @@ if st.sidebar.button("🔄 Load & Combine Data"):
     with st.spinner("🔄 Loading and combining datasets..."):
         dfs = []
 
-        if data_source == "Use Default Dataset" and 'meltwater_df_default' in locals():
+        if data_source == "Use Default Dataset" and not meltwater_df_default.empty:
             dfs.append(meltwater_df_default)
 
         if uploaded_meltwater_files:
