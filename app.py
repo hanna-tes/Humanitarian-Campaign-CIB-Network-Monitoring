@@ -24,7 +24,7 @@ def add_bg_image():
         """
         <style>
         .stApp {
-            background-image: url("https://images.unsplash.com/photo-1587614382346-4ec70e388b28?ixlib=rb-4.0.3&auto=format&fit=crop&w=1470&q=80");
+            background-image: linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)), url("https://images.unsplash.com/photo-1587614382346-4ec70e388b28?ixlib=rb-4.0.3&auto=format&fit=crop&w=1470&q=80");
             background-attachment: fixed;
             background-size: cover;
             background-position: center;
