@@ -269,7 +269,7 @@ def read_uploaded_file_with_encoding_detection(uploaded_file, file_name):
     if not uploaded_file:
         return pd.DataFrame()
     bytes_data = uploaded_file.getvalue()
-    encodings = ['utf-8-sig', 'utf-8', 'latin1', 'cp1252']
+    encodings = ['utf-8-sig', 'utf-16le', 'utf-16be', 'utf-16', 'latin1', 'cp1252']
     for enc in encodings:
         try:
             decoded = bytes_data.decode(enc)
