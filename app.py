@@ -386,7 +386,7 @@ def build_user_interaction_graph(df, coordination_type="text"):
     if df.empty or 'account_id' not in df.columns:
         return G, {}, {}
 
-    if coordination_type == "text": # FIX: Corrected typo: coordination__type -> coordination_type
+    if coordination_type == "text":
         if 'cluster' not in df.columns:
             return G, {}, {}
         grouped = df.groupby('cluster')
@@ -862,7 +862,7 @@ with tab3:
                                     thickness=15,
                                     title='Node Centrality',
                                     xanchor='left',
-                                    # Removed 'titleside' as it's not a valid property here
+                                    # REMOVED: 'titleside' is not a valid property
                                 ),
                                 line_width=2
                             )
