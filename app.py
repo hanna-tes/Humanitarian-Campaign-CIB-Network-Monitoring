@@ -28,6 +28,7 @@ PHRASES_TO_TRACK = [
     "Good bye. If we die, don't forget us",
     "If you see this reply with a dot"
 ]
+FUNDRAISING_KEYWORDS = ["donate", "fund", "gofundme", "paypal", "patreon", "venmo", "give", "help"]
 
 # --- Helper Functions ---
 def infer_platform_from_url(url):
@@ -63,6 +64,13 @@ def extract_urls_from_text(text):
     url_pattern = re.compile(r'https?://[^\s<>"]+|www\.[^\s<>"]+')
     return url_pattern.findall(text)
 
+# NEW function to extract only fundraising URLs
+def extract_fundraising_urls(text, keywords):
+    """Extracts all URLs from a text and filters for fundraising keywords."""
+    all_urls = extract_urls_from_text(text)
+    fundraising_urls = [url for url in all_urls if any(kw in url.lower() for kw in keywords)]
+    return fundraising_urls
+
 def extract_original_text(text):
     """
     Cleans text by removing RT/QT prefixes, @mentions, URLs, and normalizing spaces.
@@ -72,7 +80,6 @@ def extract_original_text(text):
         return ""
     cleaned = re.sub(r'^(RT|rt|QT|qt)\s+@\w+:\s*', '', text, flags=re.IGNORECASE).strip()
     cleaned = re.sub(r'@\w+', '', cleaned).strip()
-    # Now, only remove URLs if they are NOT the subject of analysis
     cleaned = re.sub(r'http\S+|www\S+|https\S+', '', cleaned).strip()
     
     # --- NEW: Remove dates, years, and common month names ---
@@ -226,13 +233,14 @@ def final_preprocess_and_map_columns(df, coordination_mode="Text Content"):
         df_processed['Channel'] = pd.Series([], dtype='object')
         df_processed['object_id'] = pd.Series([], dtype='object')
         df_processed['timestamp_share'] = pd.Series([], dtype='Int64')
+        df_processed['fundraising_urls_in_text'] = pd.Series([], dtype='object')
         return df_processed
     
-    # NEW: Extract all URLs from the text and create a unified 'URL' column
-    df_processed['all_urls_in_text'] = df_processed['object_id'].apply(extract_urls_from_text)
-    # Use the 'original_url' column as the main 'URL' column for downstream tasks
-    # Fallback to the first URL found in text if original_url is missing
-    df_processed['URL'] = df_processed['original_url'].fillna(df_processed['all_urls_in_text'].apply(lambda x: x[0] if x else None))
+    # NEW: Extract fundraising URLs from text and put them in a dedicated column
+    df_processed['fundraising_urls_in_text'] = df_processed['object_id'].apply(lambda x: extract_fundraising_urls(x, FUNDRAISING_KEYWORDS))
+    
+    # We use a single, reliable URL for other analyses
+    df_processed['URL'] = df_processed['original_url'].fillna(df_processed['fundraising_urls_in_text'].apply(lambda x: x[0] if x else None))
 
     df_processed['object_id'] = df_processed['object_id'].astype(str).replace('nan', '').fillna('')
     df_processed = df_processed[df_processed['object_id'].str.strip() != ""].copy()
@@ -311,7 +319,7 @@ def find_coordinated_groups(df, threshold, max_features):
         if len(group) < 2:
             continue
         
-        clean_df = group[['account_id', 'timestamp_share', 'Platform', 'URL', text_col]].copy()
+        clean_df = group[['account_id', 'timestamp_share', 'Platform', 'URL', text_col, 'fundraising_urls_in_text']].copy()
         clean_df = clean_df.rename(columns={text_col: 'text', 'timestamp_share': 'Timestamp'})
         clean_df = clean_df.reset_index(drop=True)
         
@@ -397,7 +405,7 @@ def build_user_interaction_graph(df, coordination_type="text"):
     if df.empty or 'account_id' not in df.columns:
         return G, {}, {}
 
-    if coordination_type == "text":
+    if coordination__type == "text":
         if 'cluster' not in df.columns:
             return G, {}, {}
         grouped = df.groupby('cluster')
@@ -549,9 +557,9 @@ openmeasure_df_upload = read_uploaded_file(uploaded_openmeasure, "Open-Measure")
 if meltwater_dfs_upload or not civicsignals_df_upload.empty or not openmeasure_df_upload.empty:
     with st.spinner("📥 Combining uploaded datasets..."):
         obj_map = {
-            "meltwater": "hit sentence" if coordination_mode == "Text Content" else "url",
-            "civicsignals": "title" if coordination_mode == "Text Content" else "url",
-            "openmeasure": "text" if coordination_mode == "Text Content" else "url"
+            "meltwater": "hit sentence",
+            "civicsignals": "title",
+            "openmeasure": "text"
         }
         combined_raw_df = combine_social_media_data(
             meltwater_dfs_upload,
@@ -906,32 +914,21 @@ with tab3:
         if 'coordinated_groups' not in locals():
             st.info("Please run the 'Coordination Analysis' in the 'Analysis' tab first to identify coordinated posts.")
         else:
-            # We now iterate through ALL URLs, not just from a dedicated column
-            all_urls_in_groups = []
+            # We now iterate through the dedicated fundraising_urls_in_text column
+            all_fundraising_urls = []
             for group in coordinated_groups:
                 for post in group['posts']:
-                    # Use the new list of all extracted URLs
-                    if 'all_urls_in_text' in post and post['all_urls_in_text']:
-                        all_urls_in_groups.extend(post['all_urls_in_text'])
-                    # Also check the dedicated URL column as a fallback
-                    elif 'URL' in post and post['URL'] and post['URL'] != 'nan':
-                        all_urls_in_groups.append(post['URL'])
+                    if 'fundraising_urls_in_text' in post and post['fundraising_urls_in_text']:
+                        all_fundraising_urls.extend(post['fundraising_urls_in_text'])
             
-            fundraising_keywords = ["donate", "fund", "gofundme", "paypal", "patreon", "venmo", "give", "help"]
-            
-            fundraising_data = []
-            for url in all_urls_in_groups:
-                if any(kw in url.lower() for kw in fundraising_keywords):
-                    fundraising_data.append(url)
-            
-            if fundraising_data:
-                st.info(f"🔎 Found **{len(fundraising_data)}** posts containing potential fundraising links.")
+            if all_fundraising_urls:
+                st.info(f"🔎 Found **{len(all_fundraising_urls)}** posts containing potential fundraising links.")
                 
                 def get_domain(url):
                     extracted = tldextract.extract(url)
                     return f"{extracted.domain}.{extracted.suffix}" if extracted.domain and extracted.suffix else "Unknown"
 
-                fundraising_df = pd.DataFrame(fundraising_data, columns=['URL'])
+                fundraising_df = pd.DataFrame(all_fundraising_urls, columns=['URL'])
                 fundraising_df['Domain'] = fundraising_df['URL'].apply(get_domain)
                 
                 url_counts = fundraising_df.groupby(['Domain', 'URL']).size().reset_index(name='Times Shared in Coordinated Posts')
