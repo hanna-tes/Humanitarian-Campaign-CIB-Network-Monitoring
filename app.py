@@ -18,37 +18,6 @@ import tldextract
 st.set_page_config(page_title="Humanitarian Campaign Monitor", layout="wide")
 st.title("🕊️ Humanitarian Campaign Monitoring Dashboard")
 
-# --- Add Professional Background Image ---
-def add_bg_image():
-    st.markdown(
-        """
-        <style>
-        .stApp {
-            background-image: url("https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?ixlib=rb-4.0.3&auto=format&fit=crop&w=1200&q=80");
-            background-attachment: fixed;
-            background-size: cover;
-            background-position: center;
-            color: white;
-        }
-        .css-1d391kg, .stMarkdown h1, h2, h3 {
-            color: white !important;
-            text-shadow: 2px 2px 4px #000;
-        }
-        .stSidebar {
-            background-color: rgba(255, 255, 255, 0.95);
-        }
-        .stDataFrame, .stTable {
-            background-color: rgba(255, 255, 255, 0.9);
-            border-radius: 8px;
-            overflow: hidden;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-
-add_bg_image()
-
 # --- Define the 6 key phrases to track ---
 PHRASES_TO_TRACK = [
     "If you're scrolling, PLEASE leave a dot",
@@ -106,14 +75,34 @@ def extract_all_urls(text):
     if pd.isna(text) or not isinstance(text, str): return []
     return re.findall(r'https?://\S+', text)
 
+# --- Auto-Encoding CSV Reader (Fixed for Meltwater) ---
+def read_uploaded_file_with_encoding_detection(uploaded_file, file_name):
+    if not uploaded_file:
+        return pd.DataFrame()
+    bytes_data = uploaded_file.getvalue()
+    # Your requested encodings
+    encodings = ['utf-8-sig', 'utf-16le', 'utf-16be', 'utf-16', 'latin1', 'cp1252']
+    for enc in encodings:
+        try:
+            decoded = bytes_data.decode(enc)
+            st.sidebar.info(f"✅ {file_name}: Decoded with `{enc}`")
+            sample = decoded.splitlines()[0] if decoded.splitlines() else ""
+            sep = '\t' if '\t' in sample else ','
+            df = pd.read_csv(StringIO(decoded), sep=sep, on_bad_lines='skip', low_memory=False)
+            return df
+        except UnicodeDecodeError:
+            continue
+        except Exception as e:
+            st.sidebar.warning(f"⚠️ Failed to parse {file_name}: {e}")
+            continue
+    st.sidebar.error(f"❌ Failed to decode '{file_name}'.")
+    return pd.DataFrame()
+
 # --- Combine Datasets with Flexible Column Mapping ---
 def combine_social_media_data(
     meltwater_df=None,
     civicsignals_df=None,
     openmeasure_df=None,
-    meltwater_object_col='hit sentence',
-    civicsignals_object_col='title',
-    openmeasure_object_col='text'
 ):
     combined_dfs = []
 
@@ -130,18 +119,18 @@ def combine_social_media_data(
         mw = pd.DataFrame()
         mw['account_id'] = get_col(meltwater_df, ['influencer', 'Author', 'author', 'User'], 'Unknown_User')
         mw['content_id'] = get_col(meltwater_df, ['tweet id', 'Post ID', 'post_id', 'id'], 'Unknown_ID')
-        mw['object_id'] = get_col(meltwater_df, [meltwater_object_col, 'Content', 'content', 'Text'], '')
-        mw['URL'] = get_col(meltwater_df, ['url', 'URL', 'Link'], '')
-        mw['timestamp_share'] = get_col(meltwater_df, ['date', 'Published Date', 'publish_date', 'Date'], None)
+        mw['object_id'] = get_col(meltwater_df, ['hit sentence', 'Content', 'content', 'Text'], '')
+        mw['URL'] = get_col(meltwater_df, ['url', 'URL', 'Link', 'link'], '')
+        mw['timestamp_share'] = get_col(meltwater_df, ['date', 'Published Date', 'publish_date', 'Date', 'created_at'], None)
         mw['source_dataset'] = 'Meltwater'
         combined_dfs.append(mw)
 
     # Process CivicSignals
     if civicsignals_df is not None and not civicsignals_df.empty:
         cs = pd.DataFrame()
-        cs['account_id'] = get_col(civicsignals_df, ['media_name', 'Outlet', 'outlet'], 'Unknown_Outlet')
+        cs['account_id'] = get_col(civicsignals_df, ['media_name', 'Outlet', 'outlet', 'Publisher'], 'Unknown_Outlet')
         cs['content_id'] = get_col(civicsignals_df, ['stories_id', 'story_id', 'id'], 'Unknown_ID')
-        cs['object_id'] = get_col(civicsignals_df, [civicsignals_object_col, 'title', 'Title'], '')
+        cs['object_id'] = get_col(civicsignals_df, ['title', 'Title', 'Headline'], '')
         cs['URL'] = get_col(civicsignals_df, ['url', 'URL', 'Story URL'], '')
         cs['timestamp_share'] = get_col(civicsignals_df, ['publish_date', 'date', 'Date'], None)
         cs['source_dataset'] = 'CivicSignals'
@@ -152,9 +141,9 @@ def combine_social_media_data(
         om = pd.DataFrame()
         om['account_id'] = get_col(openmeasure_df, ['actor_username', 'username', 'user'], 'Unknown_User')
         om['content_id'] = get_col(openmeasure_df, ['id', 'post_id'], 'Unknown_ID')
-        om['object_id'] = get_col(openmeasure_df, [openmeasure_object_col, 'text', 'content'], '')
+        om['object_id'] = get_col(openmeasure_df, ['text', 'content'], '')
         om['URL'] = get_col(openmeasure_df, ['url', 'link'], '')
-        om['timestamp_share'] = get_col(openmeasure_df, ['created_at', 'date'], None)
+        om['timestamp_share'] = get_col(openmeasure_df, ['created_at', 'date', 'timestamp'], None)
         om['source_dataset'] = 'OpenMeasure'
         combined_dfs.append(om)
 
@@ -184,7 +173,6 @@ def final_preprocess_and_map_columns(df):
     df_processed['Platform'] = df_processed['URL'].apply(infer_platform_from_url)
     df_processed['extracted_urls'] = df_processed['object_id'].apply(extract_all_urls)
 
-    # Assign phrase
     def assign_phrase(text):
         for p in PHRASES_TO_TRACK:
             if p.lower() in text:
@@ -249,7 +237,8 @@ def build_user_interaction_graph(df):
                 G[u1][u2]['weight'] += 1
             else:
                 G.add_edge(u1, u2, weight=1)
-    for user in df['account_id'].dropna().unique():
+    all_users = df['account_id'].dropna().unique()
+    for user in all_users:
         if user not in G: G.add_node(user)
     if not G.nodes(): return G, {}, {}
     pos = nx.kamada_kawai_layout(G)
@@ -263,28 +252,6 @@ def cached_clustering(_df, eps, min_samples, max_features): return cluster_texts
 def cached_find_coordinated_groups(_df, threshold, max_features): return find_coordinated_groups(_df, threshold, max_features)
 @st.cache_data
 def cached_network_graph(_df): return build_user_interaction_graph(_df)
-
-# --- Auto-Encoding CSV Reader ---
-def read_uploaded_file_with_encoding_detection(uploaded_file, file_name):
-    if not uploaded_file:
-        return pd.DataFrame()
-    bytes_data = uploaded_file.getvalue()
-    encodings = ['utf-8-sig', 'utf-16le', 'utf-16be', 'utf-16', 'latin1', 'cp1252']
-    for enc in encodings:
-        try:
-            decoded = bytes_data.decode(enc)
-            st.sidebar.info(f"✅ {file_name}: Decoded with `{enc}`")
-            sample = decoded.splitlines()[0] if decoded.splitlines() else ""
-            sep = '\t' if '\t' in sample else ','
-            df = pd.read_csv(StringIO(decoded), sep=sep, on_bad_lines='skip', low_memory=False)
-            return df
-        except UnicodeDecodeError:
-            continue
-        except Exception as e:
-            st.sidebar.warning(f"⚠️ Failed to parse {file_name}: {e}")
-            continue
-    st.sidebar.error(f"❌ Failed to decode '{file_name}'.")
-    return pd.DataFrame()
 
 # --- Sidebar: Upload Multiple Files ---
 st.sidebar.header("📤 Upload Your Data")
@@ -327,7 +294,7 @@ if st.sidebar.button("🔄 Load & Combine Data"):
             st.error("❌ No files uploaded or all failed to load.")
         else:
             st.session_state.combined_raw_df = combine_social_media_data(
-                meltwater_df=pd.concat([d for d in dfs if 'influencer' in d.columns or any(kw in [c.lower() for c in d.columns] for kw in ['author', 'content'])], ignore_index=True) if any('influencer' in d.columns or any(kw in [c.lower() for c in d.columns] for kw in ['author', 'content']) for d in dfs) else None,
+                meltwater_df=pd.concat([d for d in dfs if any(kw in [c.lower() for c in d.columns] for kw in ['influencer', 'author'])], ignore_index=True) if any(any(kw in [c.lower() for c in d.columns] for kw in ['influencer', 'author']) for d in dfs) else None,
                 civicsignals_df=next((d for d in dfs if 'media_name' in d.columns), None),
                 openmeasure_df=next((d for d in dfs if 'actor_username' in d.columns), None)
             )
@@ -382,7 +349,6 @@ with tab1:
     st.subheader("📌 Overview of Combined Data")
 
     if not st.session_state.df.empty:
-        # Convert timestamp to UTC for display
         display_df = st.session_state.df.copy()
         display_df['date_utc'] = pd.to_datetime(display_df['timestamp_share'], unit='s', utc=True)
 
@@ -459,145 +425,70 @@ with tab2:
                 return _df.to_csv(index=False).encode('utf-8')
 
             csv = convert_df(pairs_df)
-            st.download_button("📥 Download Similar Pairs Report", csv, "similar_pairs.csv", "text/css")
+            st.download_button("📥 Download Similar Pairs Report", csv, "similar_pairs.csv", "text/csv")
     else:
         st.info("Upload data and click 'Run Similarity Analysis' to begin.")
 
 # ==================== TAB 3: Network & Risk ====================
 with tab3:
-    st.subheader("🕸️ Network Graph of Coordinated Activity")
+    st.subheader("🌐 Network of Coordinated Accounts")
 
-    # --- Node Limiting Slider ---
-    st.markdown("Use the slider below to limit the number of accounts displayed in the network graph.")
     if 'max_nodes_to_display' not in st.session_state:
-        st.session_state.max_nodes_to_display = 40  # Default value
+        st.session_state.max_nodes_to_display = 40
+
     st.session_state.max_nodes_to_display = st.slider(
         "Maximum Nodes to Display in Graph",
         min_value=10, max_value=200, value=st.session_state.max_nodes_to_display, step=10,
-        help="Limit the graph to the top N most central accounts to improve visibility and focus on key influencers."
+        help="Limit the graph to the top N most connected accounts."
     )
-    st.markdown("---")
 
-    st.markdown("This visualization shows a network of accounts involved in coordinated activity. A link between two accounts means they posted similar content or shared the same URL.")
-
-    if df_for_analysis.empty:
-        st.info("No data available to generate a network graph.")
-    else:
-        # Run clustering to get clusters for graph
-        eps = st.session_state.get('eps', 0.3)
-        min_samples = st.session_state.get('min_samples', 2)
-        max_features = st.session_state.get('max_features', 2000)
-
-        with st.spinner("🗂️ Pre-processing data for network graph..."):
-            clustered_df_for_graph = cached_clustering(df_for_analysis, eps, min_samples, max_features)
-
-        # Build network graph
-        G, pos, cluster_map = cached_network_graph(clustered_df_for_graph)
+    if st.button("Build Network Graph") and not df_for_analysis.empty:
+        with st.spinner("Building network..."):
+            clustered = cached_clustering(df_for_analysis, eps, min_samples, max_features)
+            G, pos, cluster_map = cached_network_graph(clustered)
 
         if not G.nodes():
             st.warning("No coordinated activity detected to build a network graph.")
         else:
-            st.info(f"Displaying a network of the top {st.session_state.max_nodes_to_display} most connected accounts.")
+            # Filter top nodes by degree
+            node_degrees = dict(G.degree())
+            top_nodes = sorted(node_degrees, key=node_degrees.get, reverse=True)[:st.session_state.max_nodes_to_display]
+            subgraph = G.subgraph(top_nodes)
+            pos_filtered = {node: pos[node] for node in top_nodes}
 
-            # Create Plotly figure
-            fig_net = go.Figure()
-
-            # Add edges
-            edge_x = []
-            edge_y = []
-            for edge in G.edges():
-                x0, y0 = pos[edge[0]]
-                x1, y1 = pos[edge[1]]
+            edge_x, edge_y = [], []
+            for u, v in subgraph.edges():
+                x0, y0 = pos_filtered[u]
+                x1, y1 = pos_filtered[v]
                 edge_x.extend([x0, x1, None])
                 edge_y.extend([y0, y1, None])
-            fig_net.add_trace(go.Scatter(
-                x=edge_x, y=edge_y,
-                line=dict(width=0.5, color='#888'),
-                hoverinfo='none',
-                mode='lines'
-            ))
 
-            # Add nodes
-            node_x = []
-            node_y = []
-            node_text = []
-            node_color = []
+            edge_trace = go.Scatter(x=edge_x, y=edge_y, mode='lines', line=dict(width=0.5, color='#888'), hoverinfo='none')
 
-            for node in G.nodes():
-                x, y = pos[node]
-                node_x.append(x)
-                node_y.append(y)
-                platform = G.nodes[node].get('platform', 'Unknown')
-                deg = G.degree(node)
-                node_text.append(f"User: {node}<br>Platform: {platform}<br>Degree: {deg}")
-                # Map cluster to numeric value for coloring
-                cluster_id = cluster_map.get(node, -2)
-                if isinstance(cluster_id, str):
-                    node_color.append(hash(cluster_id) % 100)
-                else:
-                    node_color.append(cluster_id)
+            node_x, node_y, node_text, node_color = [], [], [], []
+            for node in subgraph.nodes():
+                x, y = pos_filtered[node]
+                node_x.append(x); node_y.append(y)
+                deg = subgraph.degree(node)
+                platform = subgraph.nodes[node].get('platform', 'Unknown')
+                node_text.append(f"{node}<br>deg: {deg} • {platform}")
+                node_color.append(cluster_map.get(node, -2))
 
-            fig_net.add_trace(go.Scatter(
-                x=node_x,
-                y=node_y,
-                mode='markers',
-                hoverinfo='text',
-                text=node_text,
+            node_trace = go.Scatter(
+                x=node_x, y=node_y, mode='markers', hoverinfo='text', text=node_text,
                 marker=dict(
-                    size=[G.degree(n) * 3 + 10 for n in G.nodes()],
-                    color=node_color,
-                    colorscale='Viridis',
-                    showscale=True,
-                    colorbar=dict(title="Cluster"),
-                    line_width=2,
-                    opacity=0.8
-                ),
-                name="Accounts"
-            ))
-
-            fig_net.update_layout(
-                title=f"Network of Coordinated Accounts (Top {st.session_state.max_nodes_to_display} Nodes)",
-                showlegend=False,
-                hovermode='closest',
-                margin=dict(b=20, l=5, r=5, t=40),
-                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                height=700
+                    size=[subgraph.degree(n)*3 + 10 for n in subgraph.nodes()],
+                    color=node_color, colorscale='Viridis', showscale=True
+                )
             )
 
-            st.plotly_chart(fig_net, use_container_width=True)
+            fig = go.Figure(data=[edge_trace, node_trace], layout=go.Layout(title="CIB Network", showlegend=False, hovermode='closest'))
+            st.plotly_chart(fig, use_container_width=True)
 
-            # --- Risk & Influence Assessment ---
-            st.markdown("### Risk & Influence Assessment")
-            st.markdown("""
-            **Centrality Analysis**: Accounts with high centrality (many connections) are key nodes in the network, potentially acting as amplifiers or originators of a message.
-            - **Degree Centrality**: The number of connections a node has. High degree means an account is co-participating with many others.
-            """)
-
-            degree_centrality = nx.degree_centrality(G)
-            risk_df = pd.DataFrame(degree_centrality.items(), columns=['Account', 'Degree Centrality'])
-            risk_df['Risk Score'] = (risk_df['Degree Centrality'] / risk_df['Degree Centrality'].max()) * 100
-            risk_df = risk_df.sort_values('Degree Centrality', ascending=False).head(20)
-
-            # Add platform info
-            platform_map = {node: G.nodes[node].get('platform', 'Unknown') for node in G.nodes()}
-            risk_df['Platform'] = risk_df['Account'].map(platform_map)
-
-            if not risk_df.empty:
-                st.markdown("#### Top 20 Most Central Accounts (by Degree Centrality)")
-                st.dataframe(risk_df, use_container_width=True)
-
-                @st.cache_data
-                def convert_df(_df):
-                    return _df.to_csv(index=False).encode('utf-8')
-
-                csv = convert_df(risk_df)
-                st.download_button(
-                    "📥 Download Risk Assessment CSV",
-                    csv,
-                    "risk_assessment.csv",
-                    "text/csv",
-                    help="Downloads the list of accounts with their calculated risk scores."
-                )
-            else:
-                st.warning("No network data available for risk assessment.")
+            st.markdown("### 🚨 Risk Assessment: Top Central Accounts")
+            degree_centrality = nx.degree_centrality(subgraph)
+            risk_df = pd.DataFrame(degree_centrality.items(), columns=['Account', 'Centrality']).sort_values('Centrality', ascending=False).head(20)
+            risk_df['Risk Score'] = (risk_df['Centrality'] * 100).round(2)
+            st.dataframe(risk_df, use_container_width=True)
+    else:
+        st.info("Upload data and click 'Build Network Graph' to begin.")
