@@ -18,37 +18,6 @@ import tldextract
 st.set_page_config(page_title="Humanitarian Campaign Monitor", layout="wide")
 st.title("🕊️ Humanitarian Campaign Monitoring Dashboard")
 
-# --- Add Background Image ---
-def add_bg_image():
-    st.markdown(
-        """
-        <style>
-        .stApp {
-            background-image: linear-gradient(rgba(0, 0, 0, 0.5), rgba(0, 0, 0, 0.5)), url("https://images.unsplash.com/photo-1587614382346-4ec70e388b28?ixlib=rb-4.0.3&auto=format&fit=crop&w=1470&q=80");
-            background-attachment: fixed;
-            background-size: cover;
-            background-position: center;
-            color: white;
-        }
-        .css-1d391kg, .stMarkdown h1, h2, h3 {
-            color: white !important;
-            text-shadow: 2px 2px 4px #000;
-        }
-        .stSidebar {
-            background-color: rgba(255, 255, 255, 0.95);
-        }
-        .stDataFrame, .stTable {
-            background-color: rgba(255, 255, 255, 0.9);
-            border-radius: 8px;
-            overflow: hidden;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-
-add_bg_image()
-
 # --- Define the 6 key phrases to track ---
 PHRASES_TO_TRACK = [
     "If you're scrolling, PLEASE leave a dot",
