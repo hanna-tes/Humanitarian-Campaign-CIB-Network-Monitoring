@@ -18,24 +18,29 @@ import tldextract
 st.set_page_config(page_title="Humanitarian Campaign Monitor", layout="wide")
 st.title("🕊️ Humanitarian Campaign Monitoring Dashboard")
 
-# --- Add Background Image ---
+# --- Add Professional Background Image ---
 def add_bg_image():
     st.markdown(
         """
         <style>
         .stApp {
-            background-image: url("https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1200&q=80");
+            background-image: url("https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?ixlib=rb-4.0.3&auto=format&fit=crop&w=1200&q=80");
             background-attachment: fixed;
             background-size: cover;
             background-position: center;
             color: white;
         }
-        .css-1d391kg {  /* Title color */
+        .css-1d391kg, .stMarkdown h1, h2, h3 {
             color: white !important;
             text-shadow: 2px 2px 4px #000;
         }
-        .stSidebar .css-1v3fvcr {
+        .stSidebar {
+            background-color: rgba(255, 255, 255, 0.95);
+        }
+        .stDataFrame, .stTable {
             background-color: rgba(255, 255, 255, 0.9);
+            border-radius: 8px;
+            overflow: hidden;
         }
         </style>
         """,
@@ -111,6 +116,7 @@ def combine_social_media_data(
     openmeasure_object_col='text'
 ):
     combined_dfs = []
+
     def get_col(df, possible_names, default=None):
         if df is None or df.empty: return pd.Series([], dtype='object')
         for name in possible_names:
@@ -125,15 +131,15 @@ def combine_social_media_data(
         mw['account_id'] = get_col(meltwater_df, ['influencer', 'Author', 'author', 'User'], 'Unknown_User')
         mw['content_id'] = get_col(meltwater_df, ['tweet id', 'Post ID', 'post_id', 'id'], 'Unknown_ID')
         mw['object_id'] = get_col(meltwater_df, [meltwater_object_col, 'Content', 'content', 'Text'], '')
-        mw['URL'] = get_col(meltwater_df, ['url', 'URL', 'Link', 'link'], '')
-        mw['timestamp_share'] = get_col(meltwater_df, ['date', 'Published Date', 'publish_date', 'Date', 'created_at'], None)
+        mw['URL'] = get_col(meltwater_df, ['url', 'URL', 'Link'], '')
+        mw['timestamp_share'] = get_col(meltwater_df, ['date', 'Published Date', 'publish_date', 'Date'], None)
         mw['source_dataset'] = 'Meltwater'
         combined_dfs.append(mw)
 
     # Process CivicSignals
     if civicsignals_df is not None and not civicsignals_df.empty:
         cs = pd.DataFrame()
-        cs['account_id'] = get_col(civicsignals_df, ['media_name', 'Outlet', 'outlet', 'Publisher'], 'Unknown_Outlet')
+        cs['account_id'] = get_col(civicsignals_df, ['media_name', 'Outlet', 'outlet'], 'Unknown_Outlet')
         cs['content_id'] = get_col(civicsignals_df, ['stories_id', 'story_id', 'id'], 'Unknown_ID')
         cs['object_id'] = get_col(civicsignals_df, [civicsignals_object_col, 'title', 'Title'], '')
         cs['URL'] = get_col(civicsignals_df, ['url', 'URL', 'Story URL'], '')
@@ -148,7 +154,7 @@ def combine_social_media_data(
         om['content_id'] = get_col(openmeasure_df, ['id', 'post_id'], 'Unknown_ID')
         om['object_id'] = get_col(openmeasure_df, [openmeasure_object_col, 'text', 'content'], '')
         om['URL'] = get_col(openmeasure_df, ['url', 'link'], '')
-        om['timestamp_share'] = get_col(openmeasure_df, ['created_at', 'date', 'timestamp'], None)
+        om['timestamp_share'] = get_col(openmeasure_df, ['created_at', 'date'], None)
         om['source_dataset'] = 'OpenMeasure'
         combined_dfs.append(om)
 
@@ -169,7 +175,7 @@ def combine_social_media_data(
 # --- Final Preprocessing Function ---
 def final_preprocess_and_map_columns(df):
     if df.empty:
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame()
 
     df_processed = df.copy()
     df_processed['object_id'] = df_processed['object_id'].astype(str).replace('nan', '').fillna('')
@@ -186,12 +192,7 @@ def final_preprocess_and_map_columns(df):
         return "Other"
     df_processed['assigned_phrase'] = df_processed['original_text'].apply(assign_phrase)
 
-    # Core columns for analysis
-    core_columns = ['account_id', 'content_id', 'object_id', 'original_text', 'timestamp_share']
-    core_df = df_processed[core_columns].copy()
-    other_df = df_processed.drop(columns=core_columns, errors='ignore').copy()
-
-    return core_df, other_df
+    return df_processed
 
 # --- Analysis Functions ---
 def cluster_texts(df, eps, min_samples, max_features):
@@ -255,26 +256,6 @@ def build_user_interaction_graph(df):
     cluster_map = df.groupby('account_id')['cluster'].apply(lambda x: x.mode().iloc[0] if not x.mode().empty else -2).to_dict()
     return G, pos, cluster_map
 
-def find_fundraising_campaigns(df):
-    if df.empty: return pd.DataFrame()
-    domains = ['gofundme.com', 'paypal.com', 'paypal.me', 'unicef.org', 'icrc.org']
-    urls = df.explode('extracted_urls').dropna(subset=['extracted_urls'])
-    urls['domain'] = urls['extracted_urls'].apply(lambda x: tldextract.extract(x).registered_domain)
-    filtered = urls[urls['domain'].isin(domains)]
-    if filtered.empty: return pd.DataFrame()
-    summary = filtered.groupby('extracted_urls').agg(
-        Num_Posts=('content_id', 'size'),
-        Num_Unique_Accounts=('account_id', 'nunique'),
-        First_Shared=('timestamp_share', 'min'),
-        Last_Shared=('timestamp_share', 'max')
-    ).reset_index()
-    summary.rename(columns={'extracted_urls': 'Fundraising Link'}, inplace=True)
-    summary['First_Shared'] = pd.to_datetime(summary['First_Shared'], unit='s', utc=True)
-    summary['Last_Shared'] = pd.to_datetime(summary['Last_Shared'], unit='s', utc=True)
-    summary['Coordination_Score'] = 0.0
-    summary['Risk_Flag'] = 'Low'
-    return summary[['Fundraising Link', 'Num_Posts', 'Num_Unique_Accounts', 'First_Shared', 'Last_Shared', 'Coordination_Score', 'Risk_Flag']]
-
 # --- Caching ---
 @st.cache_data
 def cached_clustering(_df, eps, min_samples, max_features): return cluster_texts(_df, eps, min_samples, max_features)
@@ -282,8 +263,6 @@ def cached_clustering(_df, eps, min_samples, max_features): return cluster_texts
 def cached_find_coordinated_groups(_df, threshold, max_features): return find_coordinated_groups(_df, threshold, max_features)
 @st.cache_data
 def cached_network_graph(_df): return build_user_interaction_graph(_df)
-@st.cache_data
-def cached_find_fundraising_campaigns(_df): return find_fundraising_campaigns(_df)
 
 # --- Auto-Encoding CSV Reader ---
 def read_uploaded_file_with_encoding_detection(uploaded_file, file_name):
@@ -358,43 +337,41 @@ if st.sidebar.button("🔄 Load & Combine Data"):
                 st.sidebar.success(f"✅ Combined {len(st.session_state.combined_raw_df):,} posts.")
 
 # --- Preprocess ---
-if 'core_df' not in st.session_state:
-    st.session_state.core_df = pd.DataFrame()
-if 'other_df' not in st.session_state:
-    st.session_state.other_df = pd.DataFrame()
+if 'df' not in st.session_state:
+    st.session_state.df = pd.DataFrame()
 
 if not st.session_state.combined_raw_df.empty and st.sidebar.button("🧹 Preprocess Data"):
     with st.spinner("🧹 Preprocessing data..."):
-        st.session_state.core_df, st.session_state.other_df = final_preprocess_and_map_columns(st.session_state.combined_raw_df)
-    if st.session_state.core_df.empty:
+        st.session_state.df = final_preprocess_and_map_columns(st.session_state.combined_raw_df)
+    if st.session_state.df.empty:
         st.error("❌ No valid data after preprocessing.")
     else:
-        st.sidebar.success(f"✅ Processed {len(st.session_state.core_df):,} valid posts.")
+        st.sidebar.success(f"✅ Processed {len(st.session_state.df):,} valid posts.")
 
 # --- Filters ---
-if not st.session_state.core_df.empty:
+if not st.session_state.df.empty:
     st.sidebar.markdown("---")
     st.sidebar.header("🔍 Filters")
 
-    min_date = pd.to_datetime(st.session_state.core_df['timestamp_share'].min(), unit='s').date()
-    max_date = pd.to_datetime(st.session_state.core_df['timestamp_share'].max(), unit='s').date()
+    min_date = pd.to_datetime(st.session_state.df['timestamp_share'].min(), unit='s').date()
+    max_date = pd.to_datetime(st.session_state.df['timestamp_share'].max(), unit='s').date()
     date_range = st.sidebar.date_input("Date Range", [min_date, max_date], min_value=min_date, max_value=max_date)
     start_ts = int(pd.Timestamp(date_range[0], tz='UTC').timestamp())
     end_ts = int(pd.Timestamp(date_range[1], tz='UTC').timestamp()) + 86399
-    filtered_core = st.session_state.core_df[
-        (st.session_state.core_df['timestamp_share'] >= start_ts) &
-        (st.session_state.core_df['timestamp_share'] <= end_ts)
+    filtered_df = st.session_state.df[
+        (st.session_state.df['timestamp_share'] >= start_ts) &
+        (st.session_state.df['timestamp_share'] <= end_ts)
     ].copy()
 
     max_sample = st.sidebar.number_input("Max Posts for Analysis", 0, 100_000, 5000)
-    if max_sample > 0 and len(filtered_core) > max_sample:
-        df_for_analysis = filtered_core.sample(n=max_sample, random_state=42).copy()
+    if max_sample > 0 and len(filtered_df) > max_sample:
+        df_for_analysis = filtered_df.sample(n=max_sample, random_state=42).copy()
         st.sidebar.warning(f"📊 Analyzing {len(df_for_analysis):,} sampled posts.")
     else:
-        df_for_analysis = filtered_core.copy()
+        df_for_analysis = filtered_df.copy()
         st.sidebar.info(f"📊 Analyzing {len(df_for_analysis):,} posts.")
 else:
-    filtered_core = pd.DataFrame()
+    filtered_df = pd.DataFrame()
     df_for_analysis = pd.DataFrame()
 
 # --- Tabs ---
@@ -404,32 +381,32 @@ tab1, tab2, tab3 = st.tabs(["📊 Overview", "🔍 Similarity & Coordination", "
 with tab1:
     st.subheader("📌 Overview of Combined Data")
 
-    if not st.session_state.core_df.empty:
+    if not st.session_state.df.empty:
         # Convert timestamp to UTC for display
-        display_df = st.session_state.core_df.copy()
+        display_df = st.session_state.df.copy()
         display_df['date_utc'] = pd.to_datetime(display_df['timestamp_share'], unit='s', utc=True)
 
         st.markdown("### 📋 Raw Data Sample (First 10 Rows)")
         st.dataframe(display_df[['account_id', 'content_id', 'object_id', 'date_utc']].head(10), use_container_width=True)
 
-        top_influencers = st.session_state.core_df['account_id'].value_counts().head(10)
+        top_influencers = st.session_state.df['account_id'].value_counts().head(10)
         fig_influencers = px.bar(top_influencers, title="Top 10 Influencers", labels={'value': 'Number of Posts', 'index': 'Account'})
         st.plotly_chart(fig_influencers, use_container_width=True)
 
-        phrase_counts = st.session_state.core_df['assigned_phrase'].value_counts()
+        phrase_counts = st.session_state.df['assigned_phrase'].value_counts()
         if "Other" in phrase_counts.index:
             phrase_counts = phrase_counts.drop("Other")
         fig_phrases = px.bar(phrase_counts, title="Posts by Emotional Phrase", labels={'value': 'Count', 'index': 'Phrase'})
         st.plotly_chart(fig_phrases, use_container_width=True)
 
-        plot_df = st.session_state.core_df.copy()
+        plot_df = st.session_state.df.copy()
         plot_df['date'] = pd.to_datetime(plot_df['timestamp_share'], unit='s', utc=True).dt.date
         time_series = plot_df.groupby('date').size()
         fig_ts = px.line(time_series, title="Daily Post Volume", labels={'value': 'Number of Posts', 'index': 'Date'})
         st.plotly_chart(fig_ts, use_container_width=True)
 
-        if 'Platform' in st.session_state.other_df.columns:
-            platform_counts = st.session_state.other_df['Platform'].value_counts()
+        if 'Platform' in st.session_state.df.columns:
+            platform_counts = st.session_state.df['Platform'].value_counts()
             fig_platform = px.bar(platform_counts, title="Posts by Platform", labels={'value': 'Count', 'index': 'Platform'})
             st.plotly_chart(fig_platform, use_container_width=True)
     else:
@@ -439,10 +416,10 @@ with tab1:
 with tab2:
     st.subheader("🔍 Detection of Similar Messages")
 
-    eps = st.slider("DBSCAN eps", 0.1, 1.0, 0.3, 0.05)
-    min_samples = st.slider("Min Samples", 2, 10, 2)
-    max_features = st.slider("Max TF-IDF Features", 1000, 5000, 2000, 500)
-    threshold = st.slider("Pairwise Similarity Threshold", 0.8, 0.99, 0.9, 0.01)
+    eps = st.slider("DBSCAN eps", 0.1, 1.0, 0.3, 0.05, key="eps_tab2")
+    min_samples = st.slider("Min Samples", 2, 10, 2, key="min_samples_tab2")
+    max_features = st.slider("Max TF-IDF Features", 1000, 5000, 2000, 500, key="max_features_tab2")
+    threshold = st.slider("Pairwise Similarity Threshold", 0.8, 0.99, 0.9, 0.01, key="threshold_tab2")
 
     if st.button("🔍 Run Similarity Analysis") and not df_for_analysis.empty:
         with st.spinner("Clustering..."):
@@ -482,7 +459,9 @@ with tab2:
                 return _df.to_csv(index=False).encode('utf-8')
 
             csv = convert_df(pairs_df)
-            st.download_button("📥 Download Similar Pairs Report", csv, "similar_pairs.csv", "text/csv")
+            st.download_button("📥 Download Similar Pairs Report", csv, "similar_pairs.csv", "text/css")
+    else:
+        st.info("Upload data and click 'Run Similarity Analysis' to begin.")
 
 # ==================== TAB 3: Network & Risk ====================
 with tab3:
