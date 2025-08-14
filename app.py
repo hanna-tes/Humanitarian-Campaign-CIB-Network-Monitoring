@@ -65,8 +65,20 @@ def extract_urls_from_text(text):
 
 def extract_fundraising_urls(text, keywords):
     """Extracts all URLs from a text and filters for fundraising keywords."""
+    if pd.isna(text) or not isinstance(text, str):
+        return []
+    
+    # First, find all URLs in the text
     all_urls = extract_urls_from_text(text)
+    
+    # Then, check each URL for fundraising keywords
     fundraising_urls = [url for url in all_urls if any(kw in url.lower() for kw in keywords)]
+    
+    # Also, check the original text for fundraising keywords
+    # This captures posts that mention "Gofundme" without a full URL
+    text_fundraising_mentions = [kw for kw in keywords if kw in text.lower()]
+    
+    # For now, we'll return the URLs, as that's what's been requested to be displayed
     return fundraising_urls
 
 def extract_original_text(text):
@@ -731,12 +743,16 @@ with tab2:
         
         run_analysis = st.button("Run Coordination Analysis")
         
+        if 'coordinated_groups' not in st.session_state:
+            st.session_state.coordinated_groups = []
+
         if run_analysis:
             with st.spinner("⏳ Running analysis..."):
                 df_clustered = cached_clustering(df_for_analysis, eps, min_samples, max_features, "uploaded_data")
                 
                 if df_clustered is not None and 'cluster' in df_clustered.columns:
                     coordinated_groups = cached_find_coordinated_groups(df_clustered, threshold, max_features, "uploaded_data")
+                    st.session_state.coordinated_groups = coordinated_groups
 
                     st.markdown("### 📈 Coordination Summary")
                     total_coordinated_posts = sum(g['num_posts'] for g in coordinated_groups)
@@ -857,13 +873,13 @@ with tab3:
                             node_y.append(y)
 
                         node_adjacencies = [len(list(graph.adj[node])) for node in graph.nodes()]
-                        node_text = list(graph.nodes()) # Updated to show account names directly on hover
+                        node_text = list(graph.nodes()) 
 
                         node_trace = go.Scatter(
                             x=node_x, y=node_y,
-                            mode='markers+text', # Changed to markers+text to display names
-                            text=node_text, # Set text directly to account names
-                            textposition="bottom center", # Position the text below the node
+                            mode='markers+text', 
+                            text=node_text, 
+                            textposition="bottom center", 
                             textfont=dict(size=10, color='black'),
                             hoverinfo='text',
                             marker=dict(
@@ -881,18 +897,16 @@ with tab3:
                             )
                         )
                         
-                        # Corrected the node_text to show all info in hover
                         hover_text = []
                         for node, adjacencies in enumerate(graph.adjacency()):
                             hover_text.append(f'Account: {list(graph.nodes())[node]}<br># of connections: {len(adjacencies[1])}')
 
-                        node_trace.hovertext = hover_text # Use hovertext to show full details on hover
+                        node_trace.hovertext = hover_text 
                         node_trace.hoverinfo = 'text'
-
 
                         fig = go.Figure(data=[edge_trace, node_trace],
                                         layout=go.Layout(
-                                            title=dict( # Corrected: Use dict for title properties
+                                            title=dict(
                                                 text='<br>Network of Coordinated Accounts',
                                                 font_size=16
                                             ),
@@ -911,19 +925,15 @@ with tab3:
                     else:
                         st.warning("The network graph could not be generated. There may not be enough coordinated activity to form a network with the current filters.")
         
-        # --- NEW SECTION: Accounts in Multiple Coordinated Messages ---
         st.markdown("---")
         st.subheader("👤 Accounts Involved in Multiple Coordinated Campaigns")
         
         def get_account_campaign_involvement(df_for_analysis):
             account_campaigns = {}
             for phrase in PHRASES_TO_TRACK:
-                # Find all posts containing the phrase, case-insensitively
                 posts_with_phrase = df_for_analysis[df_for_analysis['object_id'].str.contains(phrase, case=False, na=False)].copy()
                 
                 if not posts_with_phrase.empty:
-                    # Find coordinated groups within these posts
-                    # Note: Using cached_clustering here is important to use the same logic as the main analysis
                     df_clustered_phrase = cached_clustering(posts_with_phrase, eps=0.4, min_samples=2, max_features=5000)
                     coordinated_groups = cached_find_coordinated_groups(df_clustered_phrase, threshold=0.8, max_features=5000)
                     
@@ -955,37 +965,66 @@ with tab3:
                     st.dataframe(campaign_overlap_df.sort_values("Campaigns Involved", ascending=False), use_container_width=True)
                 else:
                     st.info("No accounts were found to be involved in multiple coordinated campaigns with the current filters.")
-        # --- END NEW SECTION ---
 
         st.markdown("---")
         st.subheader("💰 Suspicious Fundraising Analysis")
+
+        # Function to get domain from URL
+        def get_domain(url):
+            extracted = tldextract.extract(url)
+            return f"{extracted.domain}.{extracted.suffix}" if extracted.domain and extracted.suffix else "Unknown"
+
+        # --- NEW LOGIC: SHOW TOP 10 FUNDRAISING LINKS FROM ALL POSTS ---
+        st.markdown("##### Top 10 Most Mentioned Fundraising URLs (All Posts)")
         
-        if 'coordinated_groups' not in locals():
+        all_fundraising_urls_list = []
+        # Use the global filtered data to get all fundraising links
+        for urls in filtered_df_global['fundraising_urls_in_text']:
+            all_fundraising_urls_list.extend(urls)
+
+        if all_fundraising_urls_list:
+            fundraising_df_all = pd.DataFrame(all_fundraising_urls_list, columns=['URL'])
+            fundraising_df_all['Domain'] = fundraising_df_all['URL'].apply(get_domain)
+            url_counts_all = fundraising_df_all.groupby(['Domain', 'URL']).size().reset_index(name='Total Mentions')
+            url_counts_all = url_counts_all.sort_values(by='Total Mentions', ascending=False)
+            
+            st.dataframe(url_counts_all.head(10), use_container_width=True)
+            
+            # Add download button for the full list
+            csv_for_download = convert_df_to_csv(url_counts_all)
+            st.download_button(
+                label="Download Full List of All Fundraising URLs",
+                data=csv_for_download,
+                file_name="all_fundraising_urls.csv",
+                mime="text/csv",
+                help="Download a CSV file containing all unique fundraising URLs found in the data, along with their total mention counts."
+            )
+
+        else:
+            st.info("No fundraising-related URLs were found in the selected data.")
+
+        # --- ORIGINAL LOGIC: SHOW COORDINATED FUNDRAISING LINKS ---
+        st.markdown("##### Fundraising URLs in Coordinated Posts")
+        
+        if 'coordinated_groups' not in st.session_state or not st.session_state.coordinated_groups:
             st.info("Please run the 'Coordination Analysis' in the 'Analysis' tab first to identify coordinated posts.")
         else:
-            all_fundraising_urls = []
-            for group in coordinated_groups:
+            all_fundraising_urls_coordinated = []
+            for group in st.session_state.coordinated_groups:
                 for post in group['posts']:
                     if 'fundraising_urls_in_text' in post and post['fundraising_urls_in_text']:
-                        all_fundraising_urls.extend(post['fundraising_urls_in_text'])
+                        all_fundraising_urls_coordinated.extend(post['fundraising_urls_in_text'])
             
-            if all_fundraising_urls:
-                st.info(f"🔎 Found **{len(all_fundraising_urls)}** posts containing potential fundraising links.")
+            if all_fundraising_urls_coordinated:
+                st.warning("🚨 **Warning**: This table shows fundraising links with a high frequency of coordinated posts. Investigate their legitimacy.")
                 
-                def get_domain(url):
-                    extracted = tldextract.extract(url)
-                    return f"{extracted.domain}.{extracted.suffix}" if extracted.domain and extracted.suffix else "Unknown"
-
-                fundraising_df = pd.DataFrame(all_fundraising_urls, columns=['URL'])
-                fundraising_df['Domain'] = fundraising_df['URL'].apply(get_domain)
+                fundraising_df_coordinated = pd.DataFrame(all_fundraising_urls_coordinated, columns=['URL'])
+                fundraising_df_coordinated['Domain'] = fundraising_df_coordinated['URL'].apply(get_domain)
                 
-                url_counts = fundraising_df.groupby(['Domain', 'URL']).size().reset_index(name='Times Shared in Coordinated Posts')
-                url_counts = url_counts.sort_values(by='Times Shared in Coordinated Posts', ascending=False)
+                url_counts_coordinated = fundraising_df_coordinated.groupby(['Domain', 'URL']).size().reset_index(name='Times Shared in Coordinated Posts')
+                url_counts_coordinated = url_counts_coordinated.sort_values(by='Times Shared in Coordinated Posts', ascending=False)
                 
-                st.markdown("##### Top Fundraising URLs in Coordinated Posts")
-                st.warning("🚨 **Warning**: The table below shows fundraising links with a high frequency of coordinated posts. Investigate their legitimacy.")
-                
-                st.dataframe(url_counts, use_container_width=True)
+                st.dataframe(url_counts_coordinated, use_container_width=True)
 
             else:
                 st.info("No fundraising-related URLs were found in coordinated groups.")
