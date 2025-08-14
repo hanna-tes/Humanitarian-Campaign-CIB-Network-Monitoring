@@ -18,7 +18,7 @@ import tldextract
 st.set_page_config(page_title="Humanitarian Campaign Monitor", layout="wide")
 st.title("🕊️ Humanitarian Campaign Monitoring Dashboard")
 
-# --- Add Professional Background Image ---
+# --- Add Background Image ---
 def add_bg_image():
     st.markdown(
         """
@@ -115,51 +115,43 @@ def combine_social_media_data(
     civicsignals_object_col='title',
     openmeasure_object_col='text'
 ):
-    """
-    Combines datasets from Meltwater, CivicSignals, and Open-Measure.
-    Maps original column names to core analysis columns.
-    Handles case-insensitive column matching.
-    """
     combined_dfs = []
 
-    def get_col(df, possible_names, default=None):
-        if df is None or df.empty: return pd.Series([], dtype='object')
-        for name in possible_names:
-            if name.lower() in df.columns.str.lower():
-                col = df.columns[df.columns.str.lower() == name.lower()][0]
-                return df[col]
-        return pd.Series([np.nan] * len(df), index=df.index) if default is None else pd.Series([default] * len(df), index=df.index)
+    def get_specific_col(df, col_name_lower):
+        if col_name_lower in df.columns:
+            return df[col_name_lower]
+        return pd.Series([np.nan] * len(df), index=df.index)
 
     # Process Meltwater
     if meltwater_df is not None and not meltwater_df.empty:
         mw = pd.DataFrame()
-        mw['account_id'] = get_col(meltwater_df, ['influencer', 'Author', 'author', 'User'], 'Unknown_User')
-        mw['content_id'] = get_col(meltwater_df, ['tweet id', 'Post ID', 'post_id', 'id'], 'Unknown_ID')
-        mw['object_id'] = get_col(meltwater_df, [meltwater_object_col, 'Content', 'content', 'Text'], '')
-        mw['URL'] = get_col(meltwater_df, ['url', 'URL', 'Link', 'link'], '')
-        mw['timestamp_share'] = get_col(meltwater_df, ['date', 'Published Date', 'publish_date', 'Date', 'created_at'], None)
+        mw['account_id'] = get_specific_col(meltwater_df, 'influencer')
+        mw['content_id'] = get_specific_col(meltwater_df, 'tweet id')
+        mw['object_id'] = get_specific_col(meltwater_df, meltwater_object_col.lower())
+        mw['URL'] = get_specific_col(meltwater_df, 'url')
+        mw['timestamp_share'] = get_specific_col(meltwater_df, 'date')
         mw['source_dataset'] = 'Meltwater'
         combined_dfs.append(mw)
 
     # Process CivicSignals
     if civicsignals_df is not None and not civicsignals_df.empty:
         cs = pd.DataFrame()
-        cs['account_id'] = get_col(civicsignals_df, ['media_name', 'Outlet', 'outlet', 'Publisher'], 'Unknown_Outlet')
-        cs['content_id'] = get_col(civicsignals_df, ['stories_id', 'story_id', 'id'], 'Unknown_ID')
-        cs['object_id'] = get_col(civicsignals_df, [civicsignals_object_col, 'title', 'Title'], '')
-        cs['URL'] = get_col(civicsignals_df, ['url', 'URL', 'Story URL'], '')
-        cs['timestamp_share'] = get_col(civicsignals_df, ['publish_date', 'date', 'Date'], None)
+        cs['account_id'] = get_specific_col(civicsignals_df, 'media_name')
+        cs['content_id'] = get_specific_col(civicsignals_df, 'stories_id')
+        cs['object_id'] = get_specific_col(civicsignals_df, civicsignals_object_col.lower())
+        cs['URL'] = get_specific_col(civicsignals_df, 'url')
+        cs['timestamp_share'] = get_specific_col(civicsignals_df, 'publish_date')
         cs['source_dataset'] = 'CivicSignals'
         combined_dfs.append(cs)
 
     # Process Open-Measure
     if openmeasure_df is not None and not openmeasure_df.empty:
         om = pd.DataFrame()
-        om['account_id'] = get_col(openmeasure_df, ['actor_username', 'username', 'user'], 'Unknown_User')
-        om['content_id'] = get_col(openmeasure_df, ['id', 'post_id'], 'Unknown_ID')
-        om['object_id'] = get_col(openmeasure_df, [openmeasure_object_col, 'text', 'content'], '')
-        om['URL'] = get_col(openmeasure_df, ['url', 'link'], '')
-        om['timestamp_share'] = get_col(openmeasure_df, ['created_at', 'date', 'timestamp'], None)
+        om['account_id'] = get_specific_col(openmeasure_df, 'actor_username')
+        om['content_id'] = get_specific_col(openmeasure_df, 'id')
+        om['object_id'] = get_specific_col(openmeasure_df, openmeasure_object_col.lower())
+        om['URL'] = get_specific_col(openmeasure_df, 'url')
+        om['timestamp_share'] = get_specific_col(openmeasure_df, 'created_at')
         om['source_dataset'] = 'OpenMeasure'
         combined_dfs.append(om)
 
@@ -175,7 +167,6 @@ def combine_social_media_data(
     combined['timestamp_share'] = combined['timestamp_share'].apply(parse_timestamp_robust)
     combined = combined.dropna(subset=['timestamp_share']).reset_index(drop=True)
     combined = combined[combined['object_id'].str.strip() != ""].copy()
-    combined = combined.drop_duplicates(subset=['account_id', 'content_id', 'object_id', 'timestamp_share'], ignore_index=True)
     return combined
 
 # --- Final Preprocessing Function ---
@@ -190,7 +181,6 @@ def final_preprocess_and_map_columns(df):
     df_processed['Platform'] = df_processed['URL'].apply(infer_platform_from_url)
     df_processed['extracted_urls'] = df_processed['object_id'].apply(extract_all_urls)
 
-    # Assign phrase
     def assign_phrase(text):
         for p in PHRASES_TO_TRACK:
             if p.lower() in text:
@@ -270,27 +260,34 @@ def cached_find_coordinated_groups(_df, threshold, max_features): return find_co
 @st.cache_data
 def cached_network_graph(_df): return build_user_interaction_graph(_df)
 
-# --- Auto-Encoding CSV Reader ---
-def read_uploaded_file_with_encoding_detection(uploaded_file, file_name):
+# --- Auto-Encoding CSV Reader (Matches Your Working CIB Dashboard) ---
+def read_uploaded_file(uploaded_file, file_name):
     if not uploaded_file:
         return pd.DataFrame()
     bytes_data = uploaded_file.getvalue()
-    encodings = ['utf-8-sig', 'utf-16le', 'utf-16be', 'utf-16', 'latin1', 'cp1252']
+    encodings = ['utf-16le', 'utf-8-sig', 'utf-16be', 'utf-16', 'latin1', 'cp1252']
+    decoded_content = None
+    detected_enc = None
     for enc in encodings:
         try:
-            decoded = bytes_data.decode(enc)
-            st.sidebar.info(f"✅ {file_name}: Decoded with `{enc}`")
-            sample = decoded.splitlines()[0] if decoded.splitlines() else ""
-            sep = '\t' if '\t' in sample else ','
-            df = pd.read_csv(StringIO(decoded), sep=sep, on_bad_lines='skip', low_memory=False)
-            return df
-        except UnicodeDecodeError:
+            decoded_content = bytes_data.decode(enc)
+            detected_enc = enc
+            st.sidebar.info(f"✅ {file_name}: Decoded using '{enc}'")
+            break
+        except (UnicodeDecodeError, AttributeError):
             continue
-        except Exception as e:
-            st.sidebar.warning(f"⚠️ Failed to parse {file_name}: {e}")
-            continue
-    st.sidebar.error(f"❌ Failed to decode '{file_name}'.")
-    return pd.DataFrame()
+    if decoded_content is None:
+        st.error(f"❌ Failed to read {file_name} CSV: Could not decode with any supported encoding.")
+        return pd.DataFrame()
+    sample_line = decoded_content.strip().splitlines()[0]
+    sep = '\t' if '\t' in sample_line else ' ' if ' ' in sample_line else ','
+    try:
+        df = pd.read_csv(StringIO(decoded_content), sep=sep, on_bad_lines='skip', low_memory=False)
+        st.sidebar.success(f"✅ {file_name}: Loaded {len(df)} rows (sep='{sep}', enc='{detected_enc}')")
+        return df
+    except Exception as e:
+        st.error(f"❌ Failed to parse {file_name} CSV after decoding: {e}")
+        return pd.DataFrame()
 
 # --- Sidebar: Upload Multiple Files ---
 st.sidebar.header("📤 Upload Your Data")
@@ -320,19 +317,19 @@ if st.sidebar.button("🔄 Load & Combine Data"):
         if uploaded_meltwater_files:
             for i, file in enumerate(uploaded_meltwater_files):
                 file.seek(0)
-                df_temp = read_uploaded_file_with_encoding_detection(file, f"Meltwater_{i+1}")
+                df_temp = read_uploaded_file(file, f"Meltwater_{i+1}")
                 if not df_temp.empty:
                     dfs.append(df_temp)
 
         if uploaded_civicsignals:
             uploaded_civicsignals.seek(0)
-            df_temp = read_uploaded_file_with_encoding_detection(uploaded_civicsignals, "CivicSignals")
+            df_temp = read_uploaded_file(uploaded_civicsignals, "CivicSignals")
             if not df_temp.empty:
                 dfs.append(df_temp)
 
         if uploaded_openmeasure:
             uploaded_openmeasure.seek(0)
-            df_temp = read_uploaded_file_with_encoding_detection(uploaded_openmeasure, "Open-Measure")
+            df_temp = read_uploaded_file(uploaded_openmeasure, "Open-Measure")
             if not df_temp.empty:
                 dfs.append(df_temp)
 
@@ -346,7 +343,7 @@ if st.sidebar.button("🔄 Load & Combine Data"):
                 "openmeasure": "text" if coordination_mode == "Text Content" else "url"
             }
             st.session_state.combined_raw_df = combine_social_media_data(
-                meltwater_df=pd.concat([d for d in dfs if 'influencer' in d.columns or any(kw in [c.lower() for c in d.columns] for kw in ['author', 'content'])], ignore_index=True) if any('influencer' in d.columns or any(kw in [c.lower() for c in d.columns] for kw in ['author', 'content']) for d in dfs) else None,
+                meltwater_df=pd.concat([d for d in dfs if 'influencer' in d.columns], ignore_index=True) if any('influencer' in d.columns for d in dfs) else None,
                 civicsignals_df=next((d for d in dfs if 'media_name' in d.columns), None),
                 openmeasure_df=next((d for d in dfs if 'actor_username' in d.columns), None),
                 meltwater_object_col=obj_map["meltwater"],
@@ -432,7 +429,7 @@ with tab1:
             st.plotly_chart(fig_platform, use_container_width=True)
     else:
         st.info("Upload and preprocess data to see overview.")
-
+        
 # ==================== TAB 2: Similarity & Coordination ====================
 with tab2:
     st.subheader("🔍 Detection of Similar Messages")
