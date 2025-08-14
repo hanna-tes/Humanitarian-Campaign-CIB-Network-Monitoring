@@ -778,6 +778,14 @@ with tab2:
 with tab3:
     st.subheader("🌐 Network & Risk Analysis")
     
+    # NEW: Added explanation of the network graph
+    st.markdown("""
+        The network graph visualizes coordinated activity among accounts.
+        - **Nodes** (circles) represent individual accounts.
+        - **Edges** (lines) connect accounts that have engaged in coordinated activity, meaning they have either posted very similar content or shared the same URL.
+        - **Node Size and Color** are based on the number of connections an account has within the network. Larger and darker nodes indicate a **higher degree of centrality**, suggesting these accounts are more involved in coordinating with others.
+    """)
+
     if df_for_analysis.empty:
         st.warning("No data available for network analysis. Please adjust the filters or check your data source.")
     else:
@@ -848,34 +856,39 @@ with tab3:
                             node_x.append(x)
                             node_y.append(y)
 
+                        node_adjacencies = [len(list(graph.adj[node])) for node in graph.nodes()]
+                        node_text = list(graph.nodes()) # Updated to show account names directly on hover
+
                         node_trace = go.Scatter(
                             x=node_x, y=node_y,
-                            mode='markers',
+                            mode='markers+text', # Changed to markers+text to display names
+                            text=node_text, # Set text directly to account names
+                            textposition="bottom center", # Position the text below the node
+                            textfont=dict(size=10, color='black'),
                             hoverinfo='text',
                             marker=dict(
                                 showscale=True,
                                 colorscale='Viridis',
                                 reversescale=True,
-                                color=[],
+                                color=node_adjacencies,
                                 size=10,
                                 colorbar=dict(
                                     thickness=15,
                                     title='Node Centrality',
                                     xanchor='left',
-                                    # This property has been removed and is no longer causing the error
                                 ),
                                 line_width=2
                             )
                         )
-
-                        node_adjacencies = []
-                        node_text = []
+                        
+                        # Corrected the node_text to show all info in hover
+                        hover_text = []
                         for node, adjacencies in enumerate(graph.adjacency()):
-                            node_adjacencies.append(len(adjacencies[1]))
-                            node_text.append(f'Account: {list(graph.nodes())[node]}<br># of connections: {len(adjacencies[1])}')
+                            hover_text.append(f'Account: {list(graph.nodes())[node]}<br># of connections: {len(adjacencies[1])}')
 
-                        node_trace.marker.color = node_adjacencies
-                        node_trace.text = node_text
+                        node_trace.hovertext = hover_text # Use hovertext to show full details on hover
+                        node_trace.hoverinfo = 'text'
+
 
                         fig = go.Figure(data=[edge_trace, node_trace],
                                         layout=go.Layout(
