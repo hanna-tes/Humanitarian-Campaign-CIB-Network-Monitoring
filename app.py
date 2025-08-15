@@ -772,7 +772,7 @@ with tab2:
         )
     with col3:
         time_window_minutes = st.slider(
-            "Max Time Difference for 'Strong' Coordination (minutes)",
+            "Max Time Difference (minutes)",
             min_value=1,
             max_value=1440, # 24 hours
             value=120,
