@@ -849,7 +849,7 @@ with tab3:
         - **Node Size and Color** are based on the number of connections an account has within the network. Larger and darker nodes indicate a **higher degree of centrality**, suggesting these accounts are more involved in coordinating with others.
     """)
 
-    if df_for_analysis.empty:
+    if st.session_state.df_for_analysis.empty:
         st.warning("No data available for network analysis. Please adjust the filters or check your data source.")
     else:
         st.markdown("#### ⚙️ Network Graph Parameters")
@@ -869,6 +869,7 @@ with tab3:
                 help="Limits the number of nodes (accounts) shown in the graph for performance."
             )
         with col3:
+            label_size = st.slider("Account ID Label Size", min_value=5, max_value=20, value=10, step=1)
             phrase_to_filter = st.selectbox(
                 "Filter Network by Phrase",
                 options=["All"] + list(PHRASES_TO_TRACK),
@@ -880,7 +881,7 @@ with tab3:
 
         if run_network:
             with st.spinner("⏳ Generating network graph..."):
-                df_for_graph_filtered = df_for_analysis.copy()
+                df_for_graph_filtered = st.session_state.df_for_analysis.copy()
                 if phrase_to_filter != "All":
                     df_for_graph_filtered = df_for_graph_filtered[df_for_graph_filtered['object_id'].str.contains(phrase_to_filter, case=False, na=False)]
                 
@@ -888,10 +889,10 @@ with tab3:
                     st.warning(f"No posts found for the selected phrase: '{phrase_to_filter}'. Please try a different filter.")
                 else:
                     if network_mode == "Similar Content":
-                        df_clustered_for_network = cached_clustering(df_for_graph_filtered, eps=0.4, min_samples=3, max_features=5000)
-                        graph, pos, cluster_map = cached_network_graph(df_clustered_for_network, coordination_type="text", data_source="uploaded_data")
+                        df_clustered_for_network = cached_clustering(df_for_graph_filtered, eps=st.session_state.get('eps', 0.4), min_samples=st.session_state.get('min_samples', 3), max_features=st.session_state.get('max_features', 5000))
+                        graph, pos, cluster_map = cached_network_graph(df_clustered_for_network, coordination_type="Text Content", data_source="uploaded_data")
                     else: # Shared URLs
-                        graph, pos, cluster_map = cached_network_graph(df_for_graph_filtered, coordination_type="url", data_source="uploaded_data")
+                        graph, pos, cluster_map = cached_network_graph(df_for_graph_filtered, coordination_type="Shared URLs", data_source="uploaded_data")
 
                     if graph.number_of_nodes() > 0:
                         edge_x = []
@@ -928,7 +929,7 @@ with tab3:
                             mode='markers+text', 
                             text=node_text, 
                             textposition="bottom center", 
-                            textfont=dict(size=15, color='black'),
+                            textfont=dict(size=label_size, color='black'),
                             hoverinfo='text',
                             marker=dict(
                                 showscale=True,
@@ -972,6 +973,8 @@ with tab3:
                         st.plotly_chart(fig, use_container_width=True)
                     else:
                         st.warning("The network graph could not be generated. There may not be enough coordinated activity to form a network with the current filters.")
+        else:
+            st.info("Click the 'Generate Network Graph' button to visualize the network.")
 
 # ==================== TAB 4: Risk & Fundraising ====================
 with tab4:
