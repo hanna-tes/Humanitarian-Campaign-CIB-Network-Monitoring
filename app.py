@@ -772,7 +772,7 @@ with tab2:
         )
     with col3:
         time_window_minutes = st.slider(
-            "Max Time Difference (minutes)",
+            "Max Time Difference for 'Strong' Coordination (minutes)",
             min_value=1,
             max_value=1440, # 24 hours
             value=120,
@@ -870,7 +870,8 @@ with tab3:
                 size=[G.degree(node) * 5 + 5 for node in G.nodes()],
                 line=dict(width=1, color='DarkSlateGrey'),
             ),
-            textposition="bottom center"
+            textposition="bottom center",
+            textfont=dict(size=12)
         )
         edge_x, edge_y = [], []
         for edge in G.edges():
@@ -888,8 +889,10 @@ with tab3:
 
         fig = go.Figure(data=[edge_trace, node_trace],
                         layout=go.Layout(
-                            title='User Interaction Network',
-                            titlefont=dict(size=16),
+                            title=dict(
+                                text='User Interaction Network',
+                                font=dict(size=16)
+                            ),
                             showlegend=False,
                             hovermode='closest',
                             margin=dict(b=20, l=5, r=5, t=40),
