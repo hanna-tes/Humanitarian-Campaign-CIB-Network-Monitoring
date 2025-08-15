@@ -743,7 +743,7 @@ with tab2:
             "Max Time Difference (minutes)",
             min_value=1,
             max_value=1440,
-            value=120,
+            value=20,
             step=10,
             help="Groups posts shared within this time frame. A smaller window improves performance."
         )
