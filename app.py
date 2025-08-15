@@ -284,15 +284,14 @@ def find_coordinated_groups(df, threshold, max_features, time_window_minutes):
     text_col = 'original_text'
     social_media_platforms = {'TikTok', 'Facebook', 'X', 'YouTube', 'Instagram', 'Telegram'}
     
-    coordination_groups = {}
+    coordination_groups = []
     
     if df['original_text'].nunique() > 1 and len(df) > 1:
-        df_clustered = cluster_texts(df, eps=0.4, min_samples=2, max_features=max_features)
-        clustered_groups = df_clustered[df_clustered['cluster'] != -1].groupby('cluster')
+        df_clustered = df[df['cluster'] != -1].groupby('cluster')
     else:
-        clustered_groups = df.groupby(pd.Series(range(len(df))))
-    
-    for cluster_id, group in clustered_groups:
+        df_clustered = df.groupby(pd.Series(range(len(df))))
+
+    for cluster_id, group in df_clustered:
         if len(group) < 2:
             continue
         
@@ -328,7 +327,6 @@ def find_coordinated_groups(df, threshold, max_features, time_window_minutes):
                     adj[j].append(i)
         
         visited = set()
-        group_id_counter = 0
         
         for i in range(len(clean_df)):
             if i not in visited:
@@ -351,37 +349,29 @@ def find_coordinated_groups(df, threshold, max_features, time_window_minutes):
                         group_tfidf = vectorizer.transform(group_texts)
                         group_sim_scores = cosine_similarity(group_tfidf)
                         max_sim = group_sim_scores.max() if group_sim_scores.size > 0 else 0.0
+                        
+                        platforms = group_posts['Platform'].unique()
+                        social_media_platforms_in_group = [p for p in platforms if p in social_media_platforms]
+                        media_platforms_in_group = [p for p in platforms if p in {'News/Media', 'Media'}]
 
-                        coordination_groups[f"group_{group_id_counter}"] = {
+                        if len(media_platforms_in_group) > 1 and len(social_media_platforms_in_group) == 0:
+                            coordination_type = "Syndication (Media Outlets)"
+                        elif len(social_media_platforms_in_group) > 1 and len(media_platforms_in_group) == 0:
+                            coordination_type = "Coordinated Amplification (Social Media)"
+                        elif len(social_media_platforms_in_group) > 0 and len(media_platforms_in_group) > 0:
+                            coordination_type = "Media-to-Social Replication"
+                        else:
+                            coordination_type = "Other / Uncategorized"
+                            
+                        coordination_groups.append({
                             "posts": group_posts.to_dict('records'),
                             "num_posts": len(group_posts),
                             "num_accounts": len(group_posts['account_id'].unique()),
                             "max_similarity_score": round(max_sim, 3),
-                            "coordination_type": "TBD"
-                        }
-                        group_id_counter += 1
-
-    final_groups = []
-    for group_id, group_data in coordination_groups.items():
-        posts_df = pd.DataFrame(group_data['posts'])
-        platforms = posts_df['Platform'].unique()
-        
-        social_media_platforms_in_group = [p for p in platforms if p in social_media_platforms]
-        media_platforms_in_group = [p for p in platforms if p in {'News/Media', 'Media'}]
-
-        if len(media_platforms_in_group) > 1 and len(social_media_platforms_in_group) == 0:
-            coordination_type = "Syndication (Media Outlets)"
-        elif len(social_media_platforms_in_group) > 1 and len(media_platforms_in_group) == 0:
-            coordination_type = "Coordinated Amplification (Social Media)"
-        elif len(social_media_platforms_in_group) > 0 and len(media_platforms_in_group) > 0:
-            coordination_type = "Media-to-Social Replication"
-        else:
-            coordination_type = "Other / Uncategorized"
-        
-        group_data['coordination_type'] = coordination_type
-        final_groups.append(group_data)
-        
-    return final_groups
+                            "coordination_type": coordination_type
+                        })
+    
+    return coordination_groups
 
 def build_user_interaction_graph(df, coordination_type="text"):
     G = nx.Graph()
@@ -390,7 +380,7 @@ def build_user_interaction_graph(df, coordination_type="text"):
     if df.empty or 'account_id' not in df.columns:
         return G, {}, {}
 
-    if coordination_type == "text":
+    if coordination_type == "Text Content":
         if 'cluster' not in df.columns:
             return G, {}, {}
         grouped = df.groupby('cluster')
@@ -407,7 +397,7 @@ def build_user_interaction_graph(df, coordination_type="text"):
                 else:
                     G.add_edge(u1, u2, weight=1)
 
-    elif coordination_type == "url":
+    elif coordination_type == "Shared URLs":
         if 'URL' not in df.columns:
             return G, {}, {}
         url_groups = df.groupby('URL')
@@ -433,10 +423,10 @@ def build_user_interaction_graph(df, coordination_type="text"):
         if inf not in G.nodes():
             G.add_node(inf)
         G.nodes[inf]['platform'] = influencer_platform_map.get(inf, 'Unknown')
-        if coordination_type == "text":
+        if coordination_type == "Text Content":
             clusters = df[df[influencer_column] == inf]['cluster'].dropna()
             G.nodes[inf]['cluster'] = clusters.mode()[0] if not clusters.empty else -2
-        elif coordination_type == "url":
+        elif coordination_type == "Shared URLs":
             shared_urls = df[(df[influencer_column] == inf) & df['URL'].notna() & (df['URL'].str.strip() != '')]['URL'].unique()
             G.nodes[inf]['cluster'] = f"SharedURL_Group_{hash(tuple(sorted(shared_urls))) % 100}" if len(shared_urls) > 0 else "NoSharedURL"
 
@@ -446,7 +436,8 @@ def build_user_interaction_graph(df, coordination_type="text"):
         top_n_nodes = sorted_nodes[:st.session_state.get('max_nodes_to_display', 40)]
         subgraph = G.subgraph(top_n_nodes)
         
-        pos = nx.kamada_kawai_layout(subgraph)
+        # Use a different layout for better visual separation
+        pos = nx.spring_layout(subgraph, k=0.5, iterations=50)
         cluster_map = {node: G.nodes[node].get('cluster', -2) for node in subgraph.nodes()}
         return subgraph, pos, cluster_map
     else:
@@ -461,9 +452,9 @@ def get_account_campaign_involvement(df_for_analysis, threshold, max_features, t
         posts_with_phrase = df_for_analysis[df_for_analysis['object_id'].str.contains(phrase, case=False, na=False)].copy()
         
         if not posts_with_phrase.empty:
-            df_clustered_phrase = cached_clustering(posts_with_phrase, eps=0.4, min_samples=2, max_features=max_features, data_source=f"phrase_{phrase}")
+            df_clustered_phrase = cached_clustering(posts_with_phrase, eps=st.session_state.get('eps', 0.4), min_samples=st.session_state.get('min_samples', 3), max_features=max_features, data_source=f"phrase_{phrase}")
             
-            coordinated_groups = find_coordinated_groups(df_clustered_phrase, threshold, max_features, time_window_minutes)
+            coordinated_groups = cached_find_coordinated_groups(df_clustered_phrase, threshold, max_features, time_window_minutes, data_source=f"phrase_{phrase}")
             
             if coordinated_groups:
                 for group in coordinated_groups:
@@ -483,6 +474,27 @@ def get_account_campaign_involvement(df_for_analysis, threshold, max_features, t
             })
     
     return pd.DataFrame(multi_campaign_accounts)
+
+def get_top_fundraising_urls(coordinated_groups):
+    """
+    Extracts and counts unique fundraising URLs from a list of coordinated groups.
+    """
+    url_counts = Counter()
+    for group in coordinated_groups:
+        for post in group['posts']:
+            # The 'fundraising_urls_in_text' is a list of URLs
+            if 'fundraising_urls_in_text' in post and post['fundraising_urls_in_text']:
+                for url in post['fundraising_urls_in_text']:
+                    url_counts[url] += 1
+    
+    if not url_counts:
+        return pd.DataFrame()
+        
+    df_urls = pd.DataFrame(url_counts.items(), columns=['URL', 'Times Shared in Coordinated Posts'])
+    df_urls['Domain'] = df_urls['URL'].apply(lambda x: tldextract.extract(x).domain + '.' + tldextract.extract(x).suffix)
+    df_urls = df_urls.sort_values('Times Shared in Coordinated Posts', ascending=False)
+    
+    return df_urls
 
 # --- Cached Functions ---
 @st.cache_data(show_spinner="🔍 Finding coordinated posts within clusters...")
@@ -550,6 +562,9 @@ if 'last_coordination_mode' not in st.session_state or st.session_state.last_coo
     st.cache_data.clear()
     st.session_state.last_coordination_mode = coordination_mode
 
+# Store coordination mode in session state
+st.session_state.coordination_mode = coordination_mode
+
 combined_raw_df = pd.DataFrame()
 
 st.sidebar.info("Upload your CSV files below.")
@@ -594,7 +609,6 @@ with st.spinner("⏳ Preprocessing and mapping combined data..."):
 if df.empty:
     st.warning("No valid data after final preprocessing. Please adjust the filters or check your data source.")
     st.stop()
-
 
 st.sidebar.markdown("---")
 st.sidebar.header("🔍 Global Filters (Apply to all tabs)")
@@ -652,9 +666,11 @@ if max_posts_for_analysis > 0 and len(filtered_df_global) > max_posts_for_analys
 else:
     df_for_analysis = filtered_df_global.copy()
     st.sidebar.info(f"✅ Analyzing all **{len(df_for_analysis):,}** posts.")
+    
+# Store final filtered data in session state for other tabs
+st.session_state.df_for_analysis = df_for_analysis
 
-
-if filtered_df_global.empty:
+if df_for_analysis.empty:
     st.warning("No data matches the selected filters.")
     st.stop()
 
@@ -696,7 +712,7 @@ with tab1:
         st.plotly_chart(fig_volume, use_container_width=True)
 
         st.markdown("### 📋 Raw Data Sample (First 10 Rows)")
-        st.dataframe(filtered_df_global[['account_id', 'content_id', 'object_id', 'timestamp_share', 'Platform']].head(10))
+        st.image("Screenshot 2025-08-15 at 9.30.55 AM.jpg")
 
         st.markdown("### 📊 Mentions of Tracked Phrases")
         phrase_counts = {phrase: filtered_df_global['object_id'].astype(str).str.contains(phrase, case=False).sum() for phrase in PHRASES_TO_TRACK}
@@ -714,18 +730,18 @@ with tab1:
 with tab2:
     st.subheader("🔎 Coordinated Activity Analysis")
     
-    if df_for_analysis.empty:
+    if st.session_state.df_for_analysis.empty:
         st.warning("No data available for analysis. Please adjust the filters or check your data source.")
     else:
         col1, col2, col3 = st.columns(3)
         with col1:
-            if coordination_mode == "Text Content":
+            if st.session_state.coordination_mode == "Text Content":
                 eps = st.slider("DBSCAN Epsilon (Text)", min_value=0.1, max_value=1.0, value=0.4, step=0.05,
                                 help="Lower value means stricter similarity. Recommended: 0.3-0.5.")
             else:
                 eps = 0.5
         with col2:
-            if coordination_mode == "Text Content":
+            if st.session_state.coordination_mode == "Text Content":
                 min_samples = st.slider("Min Samples (Text)", min_value=2, max_value=10, value=3, step=1,
                                         help="Minimum number of posts to form a cluster.")
             else:
@@ -734,11 +750,11 @@ with tab2:
             threshold = st.slider("Coordination Similarity Threshold", min_value=0.5, max_value=1.0, value=0.8, step=0.05,
                                   help="Posts must have a similarity score above this to be considered coordinated.")
         
-        # NEW: Time-based coordination feature
+        # Time-based coordination feature
         time_window_minutes = st.slider("Max Time Difference (Minutes)", min_value=1, max_value=1440, value=20, step=1,
                                         help="Only consider posts coordinated if they are published within this time window of each other.")
         
-        # FIX: max_features is now outside the if block
+        # max_features is now outside the if block
         max_features = st.slider("Max TF-IDF Features", min_value=100, max_value=10000, value=3000, step=100,
                                  help="Limits the vocabulary size for text vectorization. Helps with performance and noise reduction.")
         
@@ -756,16 +772,18 @@ with tab2:
 
         if run_analysis:
             with st.spinner("⏳ Running analysis..."):
-                if coordination_mode == "Text Content":
+                if st.session_state.coordination_mode == "Text Content":
                     df_clustered = cached_clustering(
-                        df_for_analysis,
+                        st.session_state.df_for_analysis,
                         st.session_state.eps,
                         st.session_state.min_samples,
                         st.session_state.max_features,
-                        data_source=f"clustering_{coordination_mode}_{len(df_for_analysis)}_{st.session_state.eps}_{st.session_state.min_samples}_{st.session_state.max_features}"
+                        data_source=f"clustering_{st.session_state.coordination_mode}_{len(st.session_state.df_for_analysis)}_{st.session_state.eps}_{st.session_state.min_samples}_{st.session_state.max_features}"
                     )
                 else: # No clustering needed for URL mode
-                    df_clustered = df_for_analysis.copy()
+                    df_clustered = st.session_state.df_for_analysis.copy()
+                    df_clustered['cluster'] = df_clustered['URL'].apply(lambda x: hash(x) % 1000 if pd.notna(x) else -1)
+
                 
                 if df_clustered is not None and 'original_text' in df_clustered.columns:
                     coordinated_groups = cached_find_coordinated_groups(
@@ -773,7 +791,7 @@ with tab2:
                         st.session_state.threshold,
                         st.session_state.max_features,
                         st.session_state.time_window_minutes,
-                        data_source=f"find_groups_{coordination_mode}_{len(df_for_analysis)}_{st.session_state.threshold}_{st.session_state.max_features}_{st.session_state.time_window_minutes}"
+                        data_source=f"find_groups_{st.session_state.coordination_mode}_{len(st.session_state.df_for_analysis)}_{st.session_state.threshold}_{st.session_state.max_features}_{st.session_state.time_window_minutes}"
                     )
                     st.session_state.coordinated_groups = coordinated_groups
 
@@ -801,7 +819,7 @@ with tab2:
                                 group_df = pd.DataFrame(group['posts'])
                                 group_df['Timestamp'] = pd.to_datetime(group_df['Timestamp'], unit='s', utc=True)
                                 
-                                # NEW: Scatter plot for granular post timeline
+                                # Scatter plot for granular post timeline
                                 fig_timeline = px.scatter(
                                     group_df,
                                     x='Timestamp',
