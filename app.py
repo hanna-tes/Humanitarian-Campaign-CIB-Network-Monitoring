@@ -896,9 +896,9 @@ with tab4:
     with st.spinner("⏳ Analyzing cross-campaign involvement..."):
         multi_campaign_df = get_account_campaign_involvement(
             df_for_analysis,
-            similarity_threshold,
-            max_features,
-            time_window_minutes
+            st.session_state.get('threshold', 0.8),
+            st.session_state.get('max_features', 5000),
+            st.session_state.get('time_window_minutes', 120)
         )
 
     if not multi_campaign_df.empty:
