@@ -928,7 +928,7 @@ with tab3:
                             mode='markers+text', 
                             text=node_text, 
                             textposition="bottom center", 
-                            textfont=dict(size=10, color='black'),
+                            textfont=dict(size=15, color='black'),
                             hoverinfo='text',
                             marker=dict(
                                 showscale=True,
