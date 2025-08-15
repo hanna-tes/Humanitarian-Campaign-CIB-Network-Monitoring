@@ -731,7 +731,7 @@ with tab2:
             else:
                 min_samples = 2
         with col3:
-            threshold = st.slider("Coordination Similarity Threshold", min_value=0.5, max_value=1.0, value=0.85, step=0.05,
+            threshold = st.slider("Coordination Similarity Threshold", min_value=0.5, max_value=1.0, value=0.8, step=0.05,
                                   help="Posts must have a similarity score above this to be considered coordinated.")
         
         # NEW: Time-based coordination feature
