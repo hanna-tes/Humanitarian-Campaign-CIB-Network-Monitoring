@@ -192,7 +192,7 @@ def combine_social_media_data(
         om = pd.DataFrame()
         om['account_id'] = get_specific_col(openmeasure_df, 'actor_username')
         om['content_id'] = get_specific_col(openmeasure_df, 'id')
-        om['object_id'] = get_specific_col(openmeasure_df, openmeasure_object_col.lower())
+        om['object_id'] = get_specific_col(om_df, 'text')
         om['original_url'] = get_specific_col(om_df, 'created_at')
         om['timestamp_share'] = get_specific_col(om_df, 'created_at')
         om['source_dataset'] = 'OpenMeasure'
@@ -717,16 +717,15 @@ with tab1:
         st.plotly_chart(fig_volume, use_container_width=True)
 
         st.markdown("### 📋 Raw Data Sample (First 10 Rows)")
-        display_df = filtered_df_global.copy()
-        display_df['date_utc'] = pd.to_datetime(display_df['timestamp_share'], unit='s', utc=True)
-        st.dataframe(display_df[['account_id', 'content_id', 'object_id', 'date_utc']].head(10), use_container_width=True)
-
+        
+        # CORRECTED: Display the raw timestamp_share column
+        st.dataframe(filtered_df_global[['account_id', 'content_id', 'object_id', 'timestamp_share']].head(10), use_container_width=True)
+        
         st.markdown("---")
         top_influencers = filtered_df_global['account_id'].value_counts().head(10)
         fig_influencers = px.bar(top_influencers, title="Top 10 Influencers", labels={'value': 'Number of Posts', 'index': 'Account'})
         st.plotly_chart(fig_influencers, use_container_width=True)
 
-        # --- REPLACE PLOT WITH TABLE FOR PHRASE COUNTS ---
         st.markdown("---")
         st.markdown("### 🔢 Emotional & Algorithmic Phrases Detected (Mentions Count)")
         def contains_phrase(text):
@@ -739,16 +738,15 @@ with tab1:
 
         filtered_df_global['phrase_type'] = filtered_df_global['object_id'].apply(contains_phrase)
         
-        # Create a DataFrame for the table, dropping 'Other' if it exists
         phrase_counts_df = filtered_df_global['phrase_type'].value_counts().reset_index()
         phrase_counts_df.columns = ['Phrase', 'Mentions']
-        phrase_counts_df = phrase_counts_df[phrase_counts_df['Phrase'] != "Other"] # Filter out 'Other' for the display table
+        phrase_counts_df = phrase_counts_df[phrase_counts_df['Phrase'] != "Other"] 
         
         if not phrase_counts_df.empty:
             st.dataframe(phrase_counts_df, use_container_width=True, hide_index=True)
         else:
             st.info("No emotional or algorithmic phrases detected in the filtered data.")
-        # --- END REPLACE ---
+
 
 # ==================== TAB 2: Analysis ====================
 with tab2:
