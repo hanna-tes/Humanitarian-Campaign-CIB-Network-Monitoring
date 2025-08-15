@@ -830,80 +830,100 @@ with tab3:
         st.session_state['max_nodes_to_display'] = st.slider("Max Nodes to Display", min_value=10, max_value=200, value=40, step=10)
     with col2:
         label_size = st.slider("Account ID Label Size", min_value=1, max_value=15, value=10, step=1)
+    
+    generate_graph = st.button("Generate Network Graph")
 
-    if 'df_for_analysis' in st.session_state and not st.session_state.df_for_analysis.empty:
-        df_for_graph = st.session_state.df_for_analysis.copy()
+    if generate_graph:
+        if 'df_for_analysis' in st.session_state and not st.session_state.df_for_analysis.empty:
+            df_for_graph = st.session_state.df_for_analysis.copy()
 
-        with st.spinner("⏳ Building network graph..."):
-            if st.session_state.coordination_mode == "Text Content":
-                df_for_graph = cached_clustering(
-                    df_for_graph, 
-                    eps=st.session_state.get('eps', 0.4), 
-                    min_samples=st.session_state.get('min_samples', 3), 
-                    max_features=st.session_state.get('max_features', 5000), 
-                    data_source=f"graph_{st.session_state.coordination_mode}_{len(df_for_graph)}_{st.session_state.get('eps', 0.4)}_{st.session_state.get('min_samples', 3)}_{st.session_state.get('max_features', 5000)}"
+            with st.spinner("⏳ Building network graph..."):
+                if st.session_state.coordination_mode == "Text Content":
+                    df_for_graph = cached_clustering(
+                        df_for_graph, 
+                        eps=st.session_state.get('eps', 0.4), 
+                        min_samples=st.session_state.get('min_samples', 3), 
+                        max_features=st.session_state.get('max_features', 5000), 
+                        data_source=f"graph_{st.session_state.coordination_mode}_{len(df_for_graph)}_{st.session_state.get('eps', 0.4)}_{st.session_state.get('min_samples', 3)}_{st.session_state.get('max_features', 5000)}"
+                    )
+                    graph_type = "Text Content"
+                else:
+                    graph_type = "Shared URLs"
+                
+                G, pos, cluster_map = cached_network_graph(df_for_graph, coordination_type=graph_type, data_source=f"graph_build_{st.session_state.coordination_mode}_{len(df_for_graph)}_{st.session_state.get('max_nodes_to_display', 40)}")
+
+            if G.nodes():
+                node_trace = go.Scatter(
+                    x=[pos[node][0] for node in G.nodes()],
+                    y=[pos[node][1] for node in G.nodes()],
+                    mode='markers+text',
+                    text=[node for node in G.nodes()],
+                    textfont=dict(size=label_size, color="white"),
+                    textposition="bottom center",
+                    hoverinfo='text',
+                    marker=dict(
+                        color=[cluster_map.get(node, -2) for node in G.nodes()],
+                        colorscale='Viridis',
+                        size=[G.degree(node) * 5 + 5 for node in G.nodes()],
+                        line=dict(width=1, color='DarkSlateGrey'),
+                    ),
                 )
-                graph_type = "text"
+                
+                edge_x, edge_y = [], []
+                for edge in G.edges():
+                    x0, y0 = pos[edge[0]]
+                    x1, y1 = pos[edge[1]]
+                    edge_x.extend([x0, x1, None])
+                    edge_y.extend([y0, y1, None])
+
+                edge_trace = go.Scatter(
+                    x=edge_x, y=edge_y,
+                    line=dict(width=0.5, color='#888'),
+                    hoverinfo='none',
+                    mode='lines'
+                )
+
+                fig = go.Figure(data=[edge_trace, node_trace],
+                                layout=go.Layout(
+                                    title='User Interaction Network',
+                                    showlegend=False,
+                                    hovermode='closest',
+                                    margin=dict(b=20, l=5, r=5, t=40),
+                                    xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                                    yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
+                                ))
+                st.plotly_chart(fig, use_container_width=True)
             else:
-                graph_type = "url"
-
-            G, pos, cluster_map = cached_network_graph(df_for_graph, coordination_type=graph_type, data_source=f"graph_build_{st.session_state.coordination_mode}_{len(df_for_graph)}_{st.session_state.get('max_nodes_to_display', 40)}")
-            
-        if G.nodes():
-            node_trace = go.Scatter(
-                x=[pos[node][0] for node in G.nodes()],
-                y=[pos[node][1] for node in G.nodes()],
-                mode='markers+text',
-                text=[node for node in G.nodes()],
-                textfont=dict(size=label_size, color="white"),
-                textposition="bottom center",
-                hoverinfo='text',
-                marker=dict(
-                    color=[cluster_map.get(node, -2) for node in G.nodes()],
-                    colorscale='Viridis',
-                    size=[G.degree(node) * 5 + 5 for node in G.nodes()],
-                    line=dict(width=1, color='DarkSlateGrey'),
-                ),
-            )
-            
-            edge_x, edge_y = [], []
-            for edge in G.edges():
-                x0, y0 = pos[edge[0]]
-                x1, y1 = pos[edge[1]]
-                edge_x.extend([x0, x1, None])
-                edge_y.extend([y0, y1, None])
-
-            edge_trace = go.Scatter(
-                x=edge_x, y=edge_y,
-                line=dict(width=0.5, color='#888'),
-                hoverinfo='none',
-                mode='lines'
-            )
-
-            fig = go.Figure(data=[edge_trace, node_trace],
-                            layout=go.Layout(
-                                title='User Interaction Network',
-                                showlegend=False,
-                                hovermode='closest',
-                                margin=dict(b=20, l=5, r=5, t=40),
-                                xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                                yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
-                            ))
-            st.plotly_chart(fig, use_container_width=True)
+                st.warning("No network graph could be generated with the current data and parameters.")
         else:
-            st.warning("No network graph could be generated with the current data and parameters.")
+            st.info("Please run the analysis on the 'Analysis' tab first to generate the necessary data for the graph.")
     else:
-        st.info("Please run the analysis on the 'Analysis' tab first to generate the necessary data for the graph.")
+        st.info("Click the 'Generate Network Graph' button to visualize the network.")
+
 
 # ==================== TAB 4: Risk & Fundraising ====================
 with tab4:
     st.subheader("⚠️ Risk Analysis: Campaign Cohesion & Fundraising")
     st.info("This section analyzes accounts that are involved in multiple campaign themes and identifies posts containing fundraising links or keywords.")
     
+    st.markdown("### Top Fundraising URLs in Coordinated Posts")
+    
+    if 'coordinated_groups' in st.session_state and st.session_state.coordinated_groups:
+        top_urls_df = get_top_fundraising_urls(st.session_state.coordinated_groups)
+        
+        if not top_urls_df.empty:
+            st.warning("⚠️ Warning: The table below shows fundraising links with a high frequency of coordinated posts. Investigate their legitimacy.")
+            st.dataframe(top_urls_df)
+        else:
+            st.info("No fundraising URLs were found in the identified coordinated groups.")
+    else:
+        st.info("Please run the 'Coordination Analysis' in Tab 2 first to identify coordinated groups with fundraising URLs.")
+    
+    st.markdown("---")
     st.markdown("### Accounts Involved in Multiple Campaigns")
     with st.spinner("⏳ Analyzing cross-campaign involvement..."):
         multi_campaign_df = get_account_campaign_involvement(
-            df_for_analysis,
+            st.session_state.df_for_analysis,
             st.session_state.get('threshold', 0.8),
             st.session_state.get('max_features', 5000),
             st.session_state.get('time_window_minutes', 120)
@@ -914,8 +934,8 @@ with tab4:
     else:
         st.info("No accounts were found to be involved in more than one tracked campaign.")
     
-    st.markdown("### Posts with Fundraising Keywords/URLs")
-    fundraising_posts = df_for_analysis[df_for_analysis['fundraising_urls_in_text'].apply(lambda x: len(x) > 0)].copy()
+    st.markdown("### All Posts with Fundraising Keywords/URLs (across all data)")
+    fundraising_posts = st.session_state.df_for_analysis[st.session_state.df_for_analysis['fundraising_urls_in_text'].apply(lambda x: len(x) > 0)].copy()
     
     if not fundraising_posts.empty:
         st.success(f"✅ Found **{len(fundraising_posts):,}** posts with fundraising keywords or URLs.")
