@@ -840,84 +840,138 @@ with tab2:
 
 # ==================== TAB 3: Network Graph ====================
 with tab3:
-    st.subheader("🌐 User Interaction Network Graph")
-    st.info("This graph visualizes the connections between accounts based on shared content or URLs.")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.session_state['max_nodes_to_display'] = st.slider("Max Nodes to Display", min_value=10, max_value=200, value=40, step=10)
-    with col2:
-        label_size = st.slider("Account ID Label Size", min_value=1, max_value=15, value=10, step=1)
+    st.subheader("🌐 Network Graph")
     
-    generate_graph = st.button("Generate Network Graph")
+    st.markdown("""
+        The network graph visualizes coordinated activity among accounts.
+        - **Nodes** (circles) represent individual accounts.
+        - **Edges** (lines) connect accounts that have engaged in coordinated activity, meaning they have either posted very similar content or shared the same URL.
+        - **Node Size and Color** are based on the number of connections an account has within the network. Larger and darker nodes indicate a **higher degree of centrality**, suggesting these accounts are more involved in coordinating with others.
+    """)
 
-    if generate_graph:
-        if 'df_for_analysis' in st.session_state and not st.session_state.df_for_analysis.empty:
-            df_for_graph = st.session_state.df_for_analysis.copy()
-
-            with st.spinner("⏳ Building network graph..."):
-                if st.session_state.coordination_mode == "Text Content":
-                    df_for_graph = cached_clustering(
-                        df_for_graph, 
-                        eps=st.session_state.get('eps', 0.4), 
-                        min_samples=st.session_state.get('min_samples', 3), 
-                        max_features=st.session_state.get('max_features', 5000), 
-                        data_source=f"graph_{st.session_state.coordination_mode}_{len(df_for_graph)}_{st.session_state.get('eps', 0.4)}_{st.session_state.get('min_samples', 3)}_{st.session_state.get('max_features', 5000)}"
-                    )
-                    graph_type = "Text Content"
-                else:
-                    graph_type = "Shared URLs"
-                
-                G, pos, cluster_map = cached_network_graph(df_for_graph, coordination_type=graph_type, data_source=f"graph_build_{st.session_state.coordination_mode}_{len(df_for_graph)}_{st.session_state.get('max_nodes_to_display', 40)}")
-
-            if G.nodes():
-                node_trace = go.Scatter(
-                    x=[pos[node][0] for node in G.nodes()],
-                    y=[pos[node][1] for node in G.nodes()],
-                    mode='markers+text',
-                    text=[node for node in G.nodes()],
-                    textfont=dict(size=label_size, color="white"),
-                    textposition="bottom center",
-                    hoverinfo='text',
-                    marker=dict(
-                        color=[cluster_map.get(node, -2) for node in G.nodes()],
-                        colorscale='Viridis',
-                        size=[G.degree(node) * 5 + 5 for node in G.nodes()],
-                        line=dict(width=1, color='DarkSlateGrey'),
-                    ),
-                )
-                
-                edge_x, edge_y = [], []
-                for edge in G.edges():
-                    x0, y0 = pos[edge[0]]
-                    x1, y1 = pos[edge[1]]
-                    edge_x.extend([x0, x1, None])
-                    edge_y.extend([y0, y1, None])
-
-                edge_trace = go.Scatter(
-                    x=edge_x, y=edge_y,
-                    line=dict(width=0.5, color='#888'),
-                    hoverinfo='none',
-                    mode='lines'
-                )
-
-                fig = go.Figure(data=[edge_trace, node_trace],
-                                layout=go.Layout(
-                                    title='User Interaction Network',
-                                    showlegend=False,
-                                    hovermode='closest',
-                                    margin=dict(b=20, l=5, r=5, t=40),
-                                    xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                                    yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
-                                ))
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning("No network graph could be generated with the current data and parameters.")
-        else:
-            st.info("Please run the analysis on the 'Analysis' tab first to generate the necessary data for the graph.")
+    if df_for_analysis.empty:
+        st.warning("No data available for network analysis. Please adjust the filters or check your data source.")
     else:
-        st.info("Click the 'Generate Network Graph' button to visualize the network.")
+        st.markdown("#### ⚙️ Network Graph Parameters")
+        col1, col2, col3 = st.columns([1, 1, 2])
+        with col1:
+            network_mode = st.radio(
+                "Network Based On:",
+                ("Similar Content", "Shared URLs"),
+                key="network_mode",
+                help="Build the network based on who posts similar content or who shares the same URLs."
+            )
+        with col2:
+            st.session_state.max_nodes_to_display = st.slider(
+                "Max Nodes to Display",
+                min_value=10, max_value=200, value=40, step=10,
+                key="max_nodes",
+                help="Limits the number of nodes (accounts) shown in the graph for performance."
+            )
+        with col3:
+            phrase_to_filter = st.selectbox(
+                "Filter Network by Phrase",
+                options=["All"] + list(PHRASES_TO_TRACK),
+                key="phrase_filter",
+                help="Focus the network graph on a specific campaign narrative."
+            )
+        
+        run_network = st.button("Generate Network Graph")
 
+        if run_network:
+            with st.spinner("⏳ Generating network graph..."):
+                df_for_graph_filtered = df_for_analysis.copy()
+                if phrase_to_filter != "All":
+                    df_for_graph_filtered = df_for_graph_filtered[df_for_graph_filtered['object_id'].str.contains(phrase_to_filter, case=False, na=False)]
+                
+                if df_for_graph_filtered.empty:
+                    st.warning(f"No posts found for the selected phrase: '{phrase_to_filter}'. Please try a different filter.")
+                else:
+                    if network_mode == "Similar Content":
+                        df_clustered_for_network = cached_clustering(df_for_graph_filtered, eps=0.4, min_samples=3, max_features=5000)
+                        graph, pos, cluster_map = cached_network_graph(df_clustered_for_network, coordination_type="text", data_source="uploaded_data")
+                    else: # Shared URLs
+                        graph, pos, cluster_map = cached_network_graph(df_for_graph_filtered, coordination_type="url", data_source="uploaded_data")
+
+                    if graph.number_of_nodes() > 0:
+                        edge_x = []
+                        edge_y = []
+                        for edge in graph.edges():
+                            x0, y0 = pos[edge[0]]
+                            x1, y1 = pos[edge[1]]
+                            edge_x.append(x0)
+                            edge_x.append(x1)
+                            edge_x.append(None)
+                            edge_y.append(y0)
+                            edge_y.append(y1)
+                            edge_y.append(None)
+
+                        edge_trace = go.Scatter(
+                            x=edge_x, y=edge_y,
+                            line=dict(width=0.5, color='#888'),
+                            hoverinfo='none',
+                            mode='lines'
+                        )
+
+                        node_x = []
+                        node_y = []
+                        for node in graph.nodes():
+                            x, y = pos[node]
+                            node_x.append(x)
+                            node_y.append(y)
+
+                        node_adjacencies = [len(list(graph.adj[node])) for node in graph.nodes()]
+                        node_text = list(graph.nodes()) 
+
+                        node_trace = go.Scatter(
+                            x=node_x, y=node_y,
+                            mode='markers+text', 
+                            text=node_text, 
+                            textposition="bottom center", 
+                            textfont=dict(size=10, color='black'),
+                            hoverinfo='text',
+                            marker=dict(
+                                showscale=True,
+                                colorscale='Viridis',
+                                reversescale=True,
+                                color=node_adjacencies,
+                                size=10,
+                                colorbar=dict(
+                                    thickness=15,
+                                    title='Node Centrality',
+                                    xanchor='left',
+                                ),
+                                line_width=2
+                            )
+                        )
+                        
+                        hover_text = []
+                        for node, adjacencies in enumerate(graph.adjacency()):
+                            hover_text.append(f'Account: {list(graph.nodes())[node]}<br># of connections: {len(adjacencies[1])}')
+
+                        node_trace.hovertext = hover_text 
+                        node_trace.hoverinfo = 'text'
+
+                        fig = go.Figure(data=[edge_trace, node_trace],
+                                        layout=go.Layout(
+                                            title=dict(
+                                                text='<br>Network of Coordinated Accounts',
+                                                font_size=16
+                                            ),
+                                            showlegend=False,
+                                            hovermode='closest',
+                                            margin=dict(b=20, l=5, r=5, t=40),
+                                            annotations=[dict(
+                                                showarrow=False,
+                                                text="Nodes represent accounts. Links show coordinated activity.",
+                                                xref="paper", yref="paper",
+                                                x=0.005, y=-0.002)],
+                                            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                                            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False))
+                                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.warning("The network graph could not be generated. There may not be enough coordinated activity to form a network with the current filters.")
 
 # ==================== TAB 4: Risk & Fundraising ====================
 with tab4:
