@@ -712,86 +712,113 @@ with tab1:
 
 # ==================== TAB 2: Analysis ====================
 with tab2:
-    st.subheader("🔍 Coordinated Content Analysis")
-    st.info("This tab identifies clusters of highly similar content that were shared by different accounts within a specified time window.")
+    st.subheader("🔎 Coordinated Activity Analysis")
     
-    # --- Analysis Controls ---
-    st.markdown("---")
-    st.subheader("Parameters")
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        similarity_threshold = st.slider(
-            "Minimum Cosine Similarity for Coordination",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.85,
-            step=0.05,
-            help="Higher values require closer text matches (0.0=no match, 1.0=exact match)."
-        )
-    with col2:
-        max_features = st.slider(
-            "Max TF-IDF Features",
-            min_value=100,
-            max_value=5000,
-            value=2000,
-            step=100,
-            help="The vocabulary size for the analysis. A lower value speeds up analysis but may reduce nuance."
-        )
-    with col3:
-        time_window_minutes = st.slider(
-            "Max Time Difference for 'Strong' Coordination (minutes)",
-            min_value=1,
-            max_value=1440,
-            value=20,
-            step=10,
-            help="Groups posts shared within this time frame. A smaller window improves performance."
-        )
+    if df_for_analysis.empty:
+        st.warning("No data available for analysis. Please adjust the filters or check your data source.")
+    else:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if coordination_mode == "Text Content":
+                eps = st.slider("DBSCAN Epsilon (Text)", min_value=0.1, max_value=1.0, value=0.4, step=0.05,
+                                help="Lower value means stricter similarity. Recommended: 0.3-0.5.")
+            else:
+                eps = 0.5
+        with col2:
+            if coordination_mode == "Text Content":
+                min_samples = st.slider("Min Samples (Text)", min_value=2, max_value=10, value=3, step=1,
+                                        help="Minimum number of posts to form a cluster.")
+            else:
+                min_samples = 2
+        with col3:
+            threshold = st.slider("Coordination Similarity Threshold", min_value=0.5, max_value=1.0, value=0.85, step=0.05,
+                                  help="Posts must have a similarity score above this to be considered coordinated.")
+        
+        # NEW: Time-based coordination feature
+        time_window_minutes = st.slider("Max Time Difference (Minutes)", min_value=1, max_value=1440, value=20, step=1,
+                                        help="Only consider posts coordinated if they are published within this time window of each other.")
+        
+        # FIX: max_features is now outside the if block
+        max_features = st.slider("Max TF-IDF Features", min_value=100, max_value=10000, value=3000, step=100,
+                                 help="Limits the vocabulary size for text vectorization. Helps with performance and noise reduction.")
+        
+        run_analysis = st.button("Run Coordination Analysis")
+        
+        # Store analysis parameters in session state for other tabs to use
+        st.session_state.eps = eps
+        st.session_state.min_samples = min_samples
+        st.session_state.threshold = threshold
+        st.session_state.time_window_minutes = time_window_minutes
+        st.session_state.max_features = max_features
 
-    if st.button("Run Coordinated Content Analysis"):
-        if df_for_analysis.empty:
-            st.warning("No data to analyze. Please upload and filter the data first.")
-        else:
-            with st.spinner("⏳ Running coordination analysis..."):
-                coordination_groups = cached_find_coordinated_groups(
-                    df_for_analysis,
-                    similarity_threshold,
-                    max_features,
-                    time_window_minutes,
-                    data_source=f"{coordination_mode}_{len(df_for_analysis)}_{similarity_threshold}_{max_features}_{time_window_minutes}"
-                )
-            
-            st.success(f"✅ Found **{len(coordination_groups):,}** coordinated groups.")
-            
-            if coordination_groups:
-                df_groups = pd.DataFrame([
-                    {
-                        "Group ID": i,
-                        "Type": g["coordination_type"],
-                        "Num Posts": g["num_posts"],
-                        "Num Accounts": g["num_accounts"],
-                        "Max Similarity Score": g["max_similarity_score"],
-                    } for i, g in enumerate(coordination_groups)
-                ])
+        if 'coordinated_groups' not in st.session_state:
+            st.session_state.coordinated_groups = []
+
+        if run_analysis:
+            with st.spinner("⏳ Running analysis..."):
+                if coordination_mode == "Text Content":
+                    df_clustered = cached_clustering(
+                        df_for_analysis,
+                        st.session_state.eps,
+                        st.session_state.min_samples,
+                        st.session_state.max_features,
+                        data_source=f"clustering_{coordination_mode}_{len(df_for_analysis)}_{st.session_state.eps}_{st.session_state.min_samples}_{st.session_state.max_features}"
+                    )
+                else: # No clustering needed for URL mode
+                    df_clustered = df_for_analysis.copy()
                 
-                st.dataframe(df_groups.sort_values("Num Posts", ascending=False))
-                
-                st.markdown("### Top 5 Coordinated Groups")
-                for i, group in enumerate(coordination_groups):
-                    if i >= 5:
-                        break
+                if df_clustered is not None and 'original_text' in df_clustered.columns:
+                    coordinated_groups = cached_find_coordinated_groups(
+                        df_clustered,
+                        st.session_state.threshold,
+                        st.session_state.max_features,
+                        st.session_state.time_window_minutes,
+                        data_source=f"find_groups_{coordination_mode}_{len(df_for_analysis)}_{st.session_state.threshold}_{st.session_state.max_features}_{st.session_state.time_window_minutes}"
+                    )
+                    st.session_state.coordinated_groups = coordinated_groups
+
+                    st.markdown("### 📈 Coordination Summary")
+                    total_coordinated_posts = sum(g['num_posts'] for g in coordinated_groups)
+                    total_coordinated_accounts = sum(len(pd.DataFrame(g['posts'])['account_id'].unique()) for g in coordinated_groups)
                     
-                    st.markdown(f"**Group {i+1}** - **{group['coordination_type']}** | Posts: `{group['num_posts']}` | Accounts: `{group['num_accounts']}` | Max Sim: `{group['max_similarity_score']}`")
-                    group_df = pd.DataFrame(group['posts'])
-                    group_df = group_df.sort_values('Timestamp', ascending=True).reset_index(drop=True)
-                    group_df['Timestamp'] = pd.to_datetime(group_df['Timestamp'], unit='s', utc=True)
+                    col_met1, col_met2, col_met3 = st.columns(3)
+                    with col_met1:
+                        st.metric("Coordinated Groups Found", len(coordinated_groups), help="Total number of unique coordinated groups identified.")
+                    with col_met2:
+                        st.metric("Posts in Groups", total_coordinated_posts, help="Total number of posts that are part of a coordinated group.")
+                    with col_met3:
+                        st.metric("Accounts in Groups", total_coordinated_accounts, help="Total number of unique accounts participating in coordinated groups.")
                     
-                    if 'URL' in group_df.columns:
-                        display_cols = ['account_id', 'Timestamp', 'text', 'Platform', 'URL']
+                    st.info(f"✨ Found **{len(coordinated_groups):,}** coordinated groups with a total of **{total_coordinated_posts:,}** posts from **{total_coordinated_accounts:,}** unique accounts.")
+
+                    if coordinated_groups:
+                        st.markdown("### 📊 Top 10 Coordinated Groups")
+                        
+                        top_groups = sorted(coordinated_groups, key=lambda x: x['num_posts'], reverse=True)[:10]
+
+                        for i, group in enumerate(top_groups):
+                            with st.expander(f"Group {i+1}: {group['num_posts']} Posts ({group['coordination_type']}) - Max Sim: {group['max_similarity_score']}"):
+                                group_df = pd.DataFrame(group['posts'])
+                                group_df['Timestamp'] = pd.to_datetime(group_df['Timestamp'], unit='s', utc=True)
+                                
+                                # NEW: Scatter plot for granular post timeline
+                                fig_timeline = px.scatter(
+                                    group_df,
+                                    x='Timestamp',
+                                    y='account_id',
+                                    color='Platform',
+                                    hover_data=['text', 'URL'],
+                                    title="Individual Posts Over Time for this Group"
+                                )
+                                fig_timeline.update_layout(xaxis_title="Time (UTC)", yaxis_title="Account ID")
+                                st.plotly_chart(fig_timeline, use_container_width=True, key=f"group_scatter_{i}")
+                                
+                                st.markdown("##### Raw Data Sample for this Group")
+                                st.dataframe(group_df[['account_id', 'text', 'URL', 'Platform', 'Timestamp']].head(10), use_container_width=True)
                     else:
-                        display_cols = ['account_id', 'Timestamp', 'text', 'Platform']
-
-                    st.dataframe(group_df[display_cols])
+                        st.info("No coordinated groups found with the current parameters.")
+                else:
+                    st.error("Clustering failed. Please check your data or parameters.")
 
 # ==================== TAB 3: Network Graph ====================
 with tab3:
