@@ -725,7 +725,7 @@ with tab2:
             "Minimum Cosine Similarity for Coordination",
             min_value=0.0,
             max_value=1.0,
-            value=0.85,
+            value=0.75,
             step=0.05,
             help="Higher values require closer text matches (0.0=no match, 1.0=exact match)."
         )
@@ -740,10 +740,10 @@ with tab2:
         )
     with col3:
         time_window_minutes = st.slider(
-            "Max Time Difference (minutes)",
+            "Max Time Difference for 'Strong' Coordination (minutes)",
             min_value=1,
             max_value=1440,
-            value=20,
+            value=120,
             step=10,
             help="Groups posts shared within this time frame. A smaller window improves performance."
         )
@@ -771,7 +771,6 @@ with tab2:
                         "Num Posts": g["num_posts"],
                         "Num Accounts": g["num_accounts"],
                         "Max Similarity Score": g["max_similarity_score"],
-                        "Post Sample (Top 3)": [p['text'] for p in g['posts'][:3]],
                     } for i, g in enumerate(coordination_groups)
                 ])
                 
