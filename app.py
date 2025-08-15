@@ -725,7 +725,7 @@ with tab2:
             "Minimum Cosine Similarity for Coordination",
             min_value=0.0,
             max_value=1.0,
-            value=0.75,
+            value=0.85,
             step=0.05,
             help="Higher values require closer text matches (0.0=no match, 1.0=exact match)."
         )
@@ -743,7 +743,7 @@ with tab2:
             "Max Time Difference for 'Strong' Coordination (minutes)",
             min_value=1,
             max_value=1440,
-            value=120,
+            value=20,
             step=10,
             help="Groups posts shared within this time frame. A smaller window improves performance."
         )
