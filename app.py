@@ -1129,11 +1129,12 @@ with tab4:
         col_1.metric("Total Campaigns", total_campaigns)
         col_2.metric("Total Amount Raised", f"${total_raised:,.2f}")
         col_3.metric("Total Target Amount", f"${total_target:,.2f}")
+        
 
         # Top campaigns by amount raised
         st.markdown("#### Top 10 Campaigns by Amount Raised")
         top_raised = fundraising_df.sort_values('amount_raised', ascending=False).head(10).reset_index(drop=True)
-        st.dataframe(top_raised[['title', 'donation_link', 'amount_raised', 'target_amount']], use_container_width=True)
+        st.dataframe(top_raised[['title','creator','donation_link', 'amount_raised', 'target_amount']], use_container_width=True)
 
         # Campaigns by Platform/Domain
         st.markdown("#### Campaigns by Platform/Domain")
