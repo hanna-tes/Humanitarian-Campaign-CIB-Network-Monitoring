@@ -797,11 +797,11 @@ with tab2:
                                   help="Posts must have a similarity score above this to be considered coordinated.")
 
         # Time-based coordination feature
-        time_window_minutes = st.slider("Max Time Difference for 'Strong' Coordination (Minutes)", min_value=1, max_value=1440, value=120, step=1,
+        time_window_minutes = st.slider("Max Time Difference (Minutes)", min_value=1, max_value=1440, value=20, step=1,
                                         help="Only consider posts coordinated if they are published within this time window of each other.")
 
         # max_features is now outside the if block
-        max_features = st.slider("Max TF-IDF Features", min_value=100, max_value=10000, value=5000, step=100,
+        max_features = st.slider("Max TF-IDF Features", min_value=100, max_value=10000, value=3000, step=100,
                                  help="Limits the vocabulary size for text vectorization. Helps with performance and noise reduction.")
 
         run_analysis = st.button("Run Coordination Analysis")
