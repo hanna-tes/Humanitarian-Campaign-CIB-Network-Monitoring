@@ -181,8 +181,8 @@ def combine_social_media_data(
         om['account_id'] = get_specific_col(openmeasure_df, 'actor_username')
         om['content_id'] = get_specific_col(openmeasure_df, 'id')
         om['object_id'] = get_specific_col(openmeasure_df, 'text')
-        om['original_url'] = get_specific_col(om, 'created_at') # corrected: om, not openmeasure_df
-        om['timestamp_share'] = get_specific_col(om, 'created_at') # corrected: om, not openmeasure_df
+        om['original_url'] = get_specific_col(om, 'created_at')
+        om['timestamp_share'] = get_specific_col(om, 'created_at')
         om['source_dataset'] = 'OpenMeasure'
         combined_dfs.append(om)
 
@@ -552,7 +552,7 @@ def read_uploaded_file(uploaded_file, file_name):
 def read_fundraising_data(uploaded_files):
     if not uploaded_files:
         return pd.DataFrame()
-    
+
     # Define the list of correct column names, excluding the 'Error' column
     columns_to_load = ['Donation Link', 'Title', 'Amount Raised', 'Target Amount', 'Currency', 'Creator', 'Location']
 
@@ -564,20 +564,20 @@ def read_fundraising_data(uploaded_files):
             decoded_content = bytes_data.decode('utf-8-sig', errors='ignore')
             df = pd.read_csv(StringIO(decoded_content), usecols=columns_to_load)
             st.sidebar.success(f"✅ Fundraising File {i+1}: Loaded {len(df)} rows")
-            
+
             # Normalization steps
             # Fill missing numerical values with 0
             df['Amount Raised'] = df['Amount Raised'].fillna(0)
             df['Target Amount'] = df['Target Amount'].fillna(0)
-            
+
             # Fill missing categorical values with 'Unknown'
             df['Title'] = df['Title'].fillna('Unknown')
             df['Currency'] = df['Currency'].fillna('Unknown')
             df['Location'] = df['Location'].fillna('Unknown')
             df['Creator'] = df['Creator'].fillna('Unknown')
-            
+
             dfs.append(df)
-            
+
         except Exception as e:
             st.error(f"Error reading fundraising file {i+1}: {e}")
 
@@ -591,7 +591,7 @@ def read_fundraising_data(uploaded_files):
     for col in ['amount_raised', 'target_amount']:
         if col in combined_df.columns:
             combined_df[col] = pd.to_numeric(combined_df[col], errors='coerce').fillna(0)
-            
+
     # Remove duplicate rows
     combined_df.drop_duplicates(inplace=True)
 
@@ -756,3 +756,302 @@ if uploaded_fundraising_files:
         st.sidebar.success(f"✅ Loaded {len(fundraising_df):,} fundraising campaigns.")
     else:
         st.sidebar.error("❌ Failed to load fundraising data.")
+
+# --- Main App Tabs ---
+tab_coordination, tab_networks, tab_phrases, tab_fundraising = st.tabs([
+    "🤝 Coordination Analysis",
+    "🕸️ Network Graph",
+    "📢 Phrase Monitoring",
+    "💰 Fundraising Campaigns"
+])
+
+# --- Coordination Analysis Tab ---
+with tab_coordination:
+    st.header("Coordinated Activity Dashboard")
+    st.info("This tab identifies clusters of posts that are highly similar and were shared within a short time frame, suggesting coordinated activity.")
+
+    st.subheader("⚙️ Analysis Parameters")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        eps_value = st.slider(
+            'Text Similarity Threshold (Epsilon)',
+            min_value=0.1,
+            max_value=1.0,
+            value=st.session_state.get('eps', 0.4),
+            step=0.05,
+            help="Lower values mean higher similarity is required to form a cluster."
+        )
+        st.session_state.eps = eps_value
+    with col2:
+        min_samples_value = st.slider(
+            'Minimum Posts per Cluster',
+            min_value=2,
+            max_value=20,
+            value=st.session_state.get('min_samples', 3),
+            step=1,
+            help="The minimum number of similar posts required to form a cluster."
+        )
+        st.session_state.min_samples = min_samples_value
+    with col3:
+        time_window_minutes = st.slider(
+            'Time Window for Coordination (minutes)',
+            min_value=1,
+            max_value=120,
+            value=st.session_state.get('time_window', 30),
+            step=5,
+            help="The maximum time difference between posts to be considered a coordinated group."
+        )
+        st.session_state.time_window = time_window_minutes
+
+    df_clustered = cached_clustering(
+        st.session_state.df_for_analysis,
+        eps=eps_value,
+        min_samples=min_samples_value,
+        max_features=2000,
+        data_source=f"coord_analysis_df_eps_{eps_value}_minsamples_{min_samples_value}_maxfeats_{2000}_mode_{coordination_mode}"
+    )
+
+    if not df_clustered.empty:
+        total_clusters = df_clustered['cluster'].nunique()
+        noise_points = (df_clustered['cluster'] == -1).sum()
+        non_noise_clusters = total_clusters - (1 if -1 in df_clustered['cluster'].unique() else 0)
+        st.write(f"**Clustering Results:** `{non_noise_clusters}` clusters found (excluding `{noise_points}` noise posts).")
+
+        coordinated_groups = cached_find_coordinated_groups(
+            df_clustered,
+            threshold=0.8,
+            max_features=2000,
+            time_window_minutes=time_window_minutes,
+            data_source=f"coord_groups_df_thresh_0.8_time_{time_window_minutes}_maxfeats_{2000}_mode_{coordination_mode}"
+        )
+
+        st.subheader("Summary of Coordinated Activity")
+        if not coordinated_groups:
+            st.info("No coordinated groups found with the current parameters. Try adjusting the sliders.")
+        else:
+            total_posts_in_groups = sum(g['num_posts'] for g in coordinated_groups)
+            total_accounts_in_groups = sum(g['num_accounts'] for g in coordinated_groups)
+            avg_posts_per_group = np.mean([g['num_posts'] for g in coordinated_groups])
+            avg_accounts_per_group = np.mean([g['num_accounts'] for g in coordinated_groups])
+
+            summary_df = pd.DataFrame([
+                {"Metric": "Total Coordinated Groups Found", "Value": len(coordinated_groups)},
+                {"Metric": "Total Posts in Groups", "Value": total_posts_in_groups},
+                {"Metric": "Total Unique Accounts in Groups", "Value": len(set(p['account_id'] for g in coordinated_groups for p in g['posts']))},
+                {"Metric": "Avg Posts per Group", "Value": f"{avg_posts_per_group:.2f}"},
+                {"Metric": "Avg Accounts per Group", "Value": f"{avg_accounts_per_group:.2f}"},
+            ])
+            st.table(summary_df.set_index('Metric'))
+
+            st.subheader("Coordinated Group Breakdown")
+            group_details = []
+            for i, group in enumerate(sorted(coordinated_groups, key=lambda x: x['num_posts'], reverse=True)):
+                group_details.append({
+                    "Group ID": i + 1,
+                    "Coordination Type": group['coordination_type'],
+                    "Number of Posts": group['num_posts'],
+                    "Number of Unique Accounts": group['num_accounts'],
+                    "Max Similarity Score": group['max_similarity_score'],
+                    "Top 3 Phrases": ', '.join(list(set([re.search(r'\b(?!the|a|an)\w+\b', p['text'])[0] for p in group['posts'][:3] if re.search(r'\b(?!the|a|an)\w+\b', p['text'])]))) if len(group['posts']) > 0 else 'N/A'
+                })
+
+            group_df = pd.DataFrame(group_details)
+            st.dataframe(group_df, use_container_width=True)
+
+            st.subheader("Top Fundraising URLs in Coordinated Posts")
+            top_urls_df = get_top_fundraising_urls(coordinated_groups)
+            if not top_urls_df.empty:
+                st.dataframe(top_urls_df.head(10), use_container_width=True)
+            else:
+                st.info("No fundraising URLs found in coordinated posts.")
+
+            st.subheader("Detailed View of Top Coordinated Groups")
+            for i, group in enumerate(coordinated_groups):
+                if i >= 5: break
+                with st.expander(f"Group {i+1}: {group['coordination_type']} ({group['num_posts']} posts, {group['num_accounts']} accounts)"):
+                    group_df_display = pd.DataFrame(group['posts'])
+                    st.dataframe(group_df_display, use_container_width=True)
+
+
+# --- Network Graph Tab ---
+with tab_networks:
+    st.header("User Interaction Network")
+    st.info("This graph visualizes how users are connected based on their participation in coordinated groups (by text or shared URLs). A larger node indicates a higher number of connections.")
+
+    st.subheader("⚙️ Graph Parameters")
+    col1, col2 = st.columns(2)
+    with col1:
+        max_nodes_to_display = st.slider("Max Nodes to Display", min_value=10, max_value=200, value=st.session_state.get('max_nodes_to_display', 40))
+        st.session_state.max_nodes_to_display = max_nodes_to_display
+    with col2:
+        if coordination_mode == "Text Content":
+            st.write("Node color represents the cluster ID.")
+        elif coordination_mode == "Shared URLs":
+            st.write("Node color represents the platform.")
+
+    G, pos, cluster_map = cached_network_graph(st.session_state.df_for_analysis, coordination_type=coordination_mode, data_source=f"network_graph_mode_{coordination_mode}_nodes_{max_nodes_to_display}")
+    
+    if G.nodes:
+        node_x = [pos[node][0] for node in G.nodes()]
+        node_y = [pos[node][1] for node in G.nodes()]
+        
+        edge_x = []
+        edge_y = []
+        for edge in G.edges():
+            x0, y0 = pos[edge[0]]
+            x1, y1 = pos[edge[1]]
+            edge_x.extend([x0, x1, None])
+            edge_y.extend([y0, y1, None])
+
+        edge_trace = go.Scatter(
+            x=edge_x, y=edge_y,
+            line=dict(width=0.5, color='#888'),
+            hoverinfo='none',
+            mode='lines')
+        
+        node_text = []
+        node_size = []
+        if G.nodes():
+            degrees = dict(G.degree())
+            max_degree = max(degrees.values()) if degrees else 1
+            node_size = [20 * degrees.get(node, 0) / max_degree + 5 for node in G.nodes()]
+            
+            for node in G.nodes():
+                text = f"User: {node}<br>Degree: {degrees.get(node, 0)}"
+                if coordination_mode == "Text Content":
+                    text += f"<br>Cluster: {cluster_map.get(node, 'N/A')}"
+                else:
+                    text += f"<br>Platform: {G.nodes[node]['platform']}"
+                node_text.append(text)
+
+        if coordination_mode == "Text Content":
+            node_colors = [cluster_map.get(node, -2) for node in G.nodes()]
+            color_label = 'Cluster ID'
+        else: # Shared URLs
+            node_colors = [G.nodes[node]['platform'] for node in G.nodes()]
+            color_label = 'Platform'
+            
+        node_trace = go.Scatter(
+            x=node_x, y=node_y,
+            mode='markers',
+            hoverinfo='text',
+            hovertext=node_text,
+            marker=dict(
+                showscale=True,
+                colorscale='YlGnBu',
+                reversescale=True,
+                color=node_colors,
+                size=node_size,
+                colorbar=dict(
+                    thickness=15,
+                    title=color_label,
+                    xanchor='left',
+                    titleside='right'
+                ),
+                line_width=2))
+
+        fig = go.Figure(data=[edge_trace, node_trace],
+                        layout=go.Layout(
+                            title='<br>User Interaction Network Graph',
+                            titlefont_size=16,
+                            showlegend=False,
+                            hovermode='closest',
+                            margin=dict(b=20,l=5,r=5,t=40),
+                            annotations=[ dict(
+                                showarrow=False,
+                                xref="paper", yref="paper",
+                                x=0.005, y=-0.002 ) ],
+                            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No network connections found. This could be because no posts met the coordination criteria.")
+
+# --- Phrase Monitoring Tab ---
+with tab_phrases:
+    st.header("Campaign Phrase Monitoring")
+    st.info("This tab tracks the usage of specific campaign phrases over time.")
+
+    phrase_counts = {phrase: (st.session_state.df_for_analysis['object_id'].str.contains(phrase, case=False, na=False)).sum() for phrase in PHRASES_TO_TRACK}
+    phrase_counts_df = pd.DataFrame(phrase_counts.items(), columns=["Phrase", "Count"])
+    st.dataframe(phrase_counts_df.sort_values("Count", ascending=False), use_container_width=True, hide_index=True)
+
+    st.subheader("Phrase Frequency Over Time")
+    df_phrase_counts = st.session_state.df_for_analysis.copy()
+    for phrase in PHRASES_TO_TRACK:
+        df_phrase_counts[phrase] = df_phrase_counts['object_id'].str.contains(phrase, case=False, na=False)
+    
+    df_phrase_counts['date'] = pd.to_datetime(df_phrase_counts['timestamp_share'], unit='s').dt.date
+    df_daily = df_phrase_counts.groupby('date')[PHRASES_TO_TRACK].sum().reset_index()
+    df_daily_melt = df_daily.melt(id_vars='date', var_name='Phrase', value_name='Count')
+
+    if not df_daily_melt.empty:
+        fig = px.line(df_daily_melt, x='date', y='Count', color='Phrase',
+                      title='Daily Usage of Campaign Phrases',
+                      labels={'date': 'Date', 'Count': 'Number of Posts'})
+        fig.update_layout(xaxis_title="Date", yaxis_title="Number of Posts", legend_title="Phrase")
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No campaign phrases were found in the selected data.")
+
+    st.subheader("Accounts Involved in Multiple Campaigns")
+    multi_campaign_accounts_df = get_account_campaign_involvement(
+        st.session_state.df_for_analysis,
+        threshold=0.8,
+        max_features=2000,
+        time_window_minutes=st.session_state.get('time_window', 30)
+    )
+
+    if not multi_campaign_accounts_df.empty:
+        st.dataframe(multi_campaign_accounts_df.sort_values("Campaigns Involved", ascending=False), use_container_width=True, hide_index=True)
+    else:
+        st.info("No accounts were found to be involved in multiple campaigns.")
+
+
+# --- Fundraising Campaigns Tab ---
+with tab_fundraising:
+    st.header("Fundraising Campaign Dashboard")
+    st.info("This tab analyzes fundraising campaigns uploaded separately, providing insights into their performance and characteristics.")
+
+    if 'fundraising_df' not in st.session_state or st.session_state.fundraising_df.empty:
+        st.warning("Please upload fundraising data in the sidebar to view this dashboard.")
+    else:
+        fund_df = st.session_state.fundraising_df
+
+        st.subheader("Top Fundraising Campaigns by Amount Raised")
+        top_campaigns = fund_df.sort_values('amount_raised', ascending=False).head(10)
+        st.dataframe(top_campaigns, use_container_width=True)
+
+        st.subheader("Overall Fundraising Metrics")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            total_campaigns = len(fund_df)
+            st.metric("Total Campaigns", f"{total_campaigns:,}")
+        with col2:
+            total_raised = fund_df['amount_raised'].sum()
+            st.metric("Total Amount Raised", f"${total_raised:,.2f}")
+        with col3:
+            total_target = fund_df['target_amount'].sum()
+            st.metric("Total Target Amount", f"${total_target:,.2f}")
+
+        st.subheader("Campaigns by Currency")
+        currency_counts = fund_df.groupby('currency')['donation_link'].count().sort_values(ascending=False)
+        fig_currency = px.bar(
+            x=currency_counts.index,
+            y=currency_counts.values,
+            labels={'x': 'Currency', 'y': 'Number of Campaigns'},
+            title='Number of Campaigns by Currency'
+        )
+        st.plotly_chart(fig_currency, use_container_width=True)
+
+        st.subheader("Amount Raised vs. Target Amount")
+        fig_scatter = px.scatter(
+            fund_df,
+            x='target_amount',
+            y='amount_raised',
+            color='currency',
+            hover_data=['title', 'creator'],
+            labels={'target_amount': 'Target Amount', 'amount_raised': 'Amount Raised'},
+            title='Amount Raised vs. Target Amount'
+        )
+        st.plotly_chart(fig_scatter, use_container_width=True)
