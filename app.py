@@ -1107,26 +1107,13 @@ with tab4:
     st.header("💰 Fundraising & Risk Analysis")
     st.info("This tab provides insights into key phrases, accounts involved in multiple campaigns, and an overview of fundraising efforts from the dedicated CSV.")
     
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("Top 6 Phrases by Volume")
-        df_for_phrases = st.session_state.df_for_analysis
-        if not df_for_phrases.empty:
-            phrase_counts = {phrase: df_for_phrases['object_id'].str.contains(phrase, case=False, na=False).sum() for phrase in PHRASES_TO_TRACK}
-            df_phrases = pd.DataFrame(list(phrase_counts.items()), columns=['Phrase', 'Count']).sort_values('Count', ascending=False)
-            st.dataframe(df_phrases, use_container_width=True)
+    st.subheader("Accounts in Multiple Campaigns")
+    with st.spinner("Finding multi-campaign accounts..."):
+        multi_campaign_df = get_account_campaign_involvement(df_clustered, eps, max_features, time_window_minutes)
+        if not multi_campaign_df.empty:
+            st.dataframe(multi_campaign_df, use_container_width=True)
         else:
-            st.info("No data to count phrases.")
-
-    with col2:
-        st.subheader("Accounts in Multiple Campaigns")
-        with st.spinner("Finding multi-campaign accounts..."):
-            multi_campaign_df = get_account_campaign_involvement(df_clustered, eps, max_features, time_window_minutes)
-            if not multi_campaign_df.empty:
-                st.dataframe(multi_campaign_df, use_container_width=True)
-            else:
-                st.info("No accounts were found to be involved in multiple campaigns.")
+            st.info("No accounts were found to be involved in multiple campaigns.")
     
     st.markdown("---")
     st.markdown("### Fundraising Campaign Insights")
@@ -1156,6 +1143,15 @@ with tab4:
             total_raised=('amount_raised', 'sum')
         ).sort_values('campaigns', ascending=False).reset_index()
         st.dataframe(domain_counts, use_container_width=True)
+
+        st.markdown("#### Top Campaigns by Location")
+        if 'location' in fundraising_df.columns and not fundraising_df['location'].isnull().all():
+            location_counts = fundraising_df['location'].value_counts().reset_index()
+            location_counts.columns = ['Location', 'Campaign Count']
+            fig_locations = px.bar(location_counts.head(10), x='Location', y='Campaign Count', title='Top 10 Locations by Campaign Count')
+            st.plotly_chart(fig_locations, use_container_width=True)
+        else:
+            st.info("No location data available to display top locations.")
 
     else:
         st.warning("Please upload a fundraising links CSV file in the sidebar to see insights.")
