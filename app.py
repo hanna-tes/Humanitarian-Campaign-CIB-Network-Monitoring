@@ -180,8 +180,8 @@ def combine_social_media_data(
         om['account_id'] = get_specific_col(openmeasure_df, 'actor_username')
         om['content_id'] = get_specific_col(openmeasure_df, 'id')
         om['object_id'] = get_specific_col(openmeasure_df, 'text')
-        om['original_url'] = get_specific_col(openmeasure_df, 'created_at')
-        om['timestamp_share'] = get_specific_col(openmeasure_df, 'created_at')
+        om['original_url'] = get_specific_col(om, 'created_at')
+        om['timestamp_share'] = get_specific_col(om, 'created_at')
         om['source_dataset'] = 'OpenMeasure'
         combined_dfs.append(om)
 
@@ -547,6 +547,33 @@ def read_uploaded_file(uploaded_file, file_name):
         st.error(f"❌ Failed to parse {file_name} CSV after decoding: {e}")
         return pd.DataFrame()
 
+# New function to read and combine fundraising data
+def read_fundraising_data(uploaded_files):
+    if not uploaded_files:
+        return pd.DataFrame()
+    
+    dfs = []
+    for i, file in enumerate(uploaded_files):
+        try:
+            df = read_uploaded_file(file, f"Fundraising File {i+1}")
+            if not df.empty:
+                dfs.append(df)
+        except Exception as e:
+            st.error(f"Error reading fundraising file {i+1}: {e}")
+            
+    if not dfs:
+        return pd.DataFrame()
+        
+    combined_df = pd.concat(dfs, ignore_index=True)
+    combined_df.columns = combined_df.columns.str.lower().str.replace(' ', '_')
+    
+    # Ensure numerical columns are correctly typed
+    for col in ['amount_raised', 'target_amount']:
+        if col in combined_df.columns:
+            combined_df[col] = pd.to_numeric(combined_df[col], errors='coerce').fillna(0)
+    
+    return combined_df
+
 # --- Sidebar: Data Source & Coordination Mode ---
 st.sidebar.header("📥 Data Upload")
 
@@ -599,7 +626,7 @@ if meltwater_dfs_upload or not civicsignals_df_upload.empty or not openmeasure_d
         )
 
 if combined_raw_df.empty:
-    st.warning("No data loaded from uploaded files. Please upload at least one CSV file.")
+    st.warning("No social media data loaded from uploaded files. Please upload at least one social media CSV file.")
     st.stop()
 st.sidebar.success(f"✅ Combined {len(combined_raw_df):,} posts from uploaded datasets.")
 
@@ -607,7 +634,7 @@ with st.spinner("⏳ Preprocessing and mapping combined data..."):
     df = final_preprocess_and_map_columns(combined_raw_df, coordination_mode=coordination_mode)
 
 if df.empty:
-    st.warning("No valid data after final preprocessing. Please adjust the filters or check your data source.")
+    st.warning("No valid social media data after final preprocessing. Please adjust the filters or check your data source.")
     st.stop()
 
 st.sidebar.markdown("---")
@@ -695,6 +722,11 @@ if not downloadable_df.empty:
 else:
     st.sidebar.warning("Could not create downloadable dataset with core columns.")
 
+# New Fundraising Data Uploader
+st.sidebar.markdown("---")
+st.sidebar.header("💰 Fundraising Data")
+uploaded_fundraising_files = st.sidebar.file_uploader("Upload Fundraising CSV(s)", type=["csv"], accept_multiple_files=True, key="fundraising_upload")
+st.session_state.fundraising_df = read_fundraising_data(uploaded_fundraising_files)
 
 # --- Tabs ---
 tab1, tab2, tab3, tab4 = st.tabs(["📊 Overview", "🔍 Analysis", "🌐 Network Graph", "⚠️ Risk & Fundraising"])
@@ -712,7 +744,7 @@ with tab1:
         st.plotly_chart(fig_volume, use_container_width=True)
 
         st.markdown("### 📋 Raw Data Sample (First 10 Rows)")
-        st.dataframe(filtered_df_global[['account_id', 'content_id', 'object_id', 'timestamp_share', 'Platform']].head(10))
+        st.image("Screenshot 2025-08-15 at 9.30.55 AM.jpg")
 
         st.markdown("### 📊 Mentions of Tracked Phrases")
         phrase_counts = {phrase: filtered_df_global['object_id'].astype(str).str.contains(phrase, case=False).sum() for phrase in PHRASES_TO_TRACK}
@@ -751,11 +783,11 @@ with tab2:
                                   help="Posts must have a similarity score above this to be considered coordinated.")
         
         # Time-based coordination feature
-        time_window_minutes = st.slider("Max Time Difference (Minutes)", min_value=1, max_value=1440, value=20, step=1,
+        time_window_minutes = st.slider("Max Time Difference for 'Strong' Coordination (Minutes)", min_value=1, max_value=1440, value=120, step=1,
                                         help="Only consider posts coordinated if they are published within this time window of each other.")
         
         # max_features is now outside the if block
-        max_features = st.slider("Max TF-IDF Features", min_value=100, max_value=10000, value=3000, step=100,
+        max_features = st.slider("Max TF-IDF Features", min_value=100, max_value=10000, value=5000, step=100,
                                  help="Limits the vocabulary size for text vectorization. Helps with performance and noise reduction.")
         
         run_analysis = st.button("Run Coordination Analysis")
@@ -976,10 +1008,66 @@ with tab3:
         else:
             st.info("Click the 'Generate Network Graph' button to visualize the network.")
 
+
 # ==================== TAB 4: Risk & Fundraising ====================
 with tab4:
     st.subheader("⚠️ Risk Analysis: Campaign Cohesion & Fundraising")
     st.info("This section analyzes accounts that are involved in multiple campaign themes and identifies posts containing fundraising links or keywords.")
+    
+    st.markdown("---")
+    
+    # New section for fundraising data analysis
+    st.markdown("### 💰 Fundraising Campaign Analysis")
+    if not st.session_state.get('fundraising_df', pd.DataFrame()).empty:
+        fundraising_df = st.session_state.fundraising_df
+        st.success(f"✅ Loaded **{len(fundraising_df):,}** fundraising campaigns.")
+        
+        # Display key metrics
+        col_fund1, col_fund2 = st.columns(2)
+        total_raised = fundraising_df['amount_raised'].sum()
+        total_target = fundraising_df['target_amount'].sum()
+        
+        with col_fund1:
+            st.metric("Total Amount Raised", f"${total_raised:,.2f}")
+        with col_fund2:
+            st.metric("Total Target Amount", f"${total_target:,.2f}")
+
+        st.markdown("#### Top 10 Fundraising Campaigns by Amount Raised")
+        top_campaigns = fundraising_df.sort_values('amount_raised', ascending=False).head(10).reset_index(drop=True)
+        st.dataframe(top_campaigns[['title', 'fundrising_link', 'amount_raised', 'target_amount', 'creator']])
+        
+        # New table for fundraising link metrics
+        if 'fundrising_link' in fundraising_df.columns:
+            st.markdown("#### Fundraising Links by Amount Raised & Target")
+            link_metrics = fundraising_df.groupby('fundrising_link').agg(
+                Total_Amount_Raised=('amount_raised', 'sum'),
+                Total_Target_Amount=('target_amount', 'sum'),
+                Number_of_Campaigns=('title', 'count')
+            ).reset_index()
+            
+            link_metrics['Percentage_of_Target_Met'] = (link_metrics['Total_Amount_Raised'] / link_metrics['Total_Target_Amount']) * 100
+            link_metrics = link_metrics.sort_values('Total_Amount_Raised', ascending=False)
+            
+            st.markdown("The table below shows metrics aggregated for each unique fundraising link, providing a direct view of a link's success.")
+            st.dataframe(link_metrics, use_container_width=True)
+
+
+        # Visualize Amount Raised by Creator
+        st.markdown("#### Amount Raised by Creator")
+        creator_summary = fundraising_df.groupby('creator')['amount_raised'].sum().sort_values(ascending=False).head(10).reset_index()
+        fig_creator = px.bar(creator_summary, x='creator', y='amount_raised', title='Top 10 Creators by Amount Raised')
+        st.plotly_chart(fig_creator, use_container_width=True)
+
+        # Visualize Amount Raised by Location
+        st.markdown("#### Amount Raised by Location")
+        location_summary = fundraising_df.groupby('location')['amount_raised'].sum().sort_values(ascending=False).head(10).reset_index()
+        fig_location = px.bar(location_summary, x='location', y='amount_raised', title='Top 10 Locations by Amount Raised')
+        st.plotly_chart(fig_location, use_container_width=True)
+
+    else:
+        st.info("Please upload fundraising CSV files in the sidebar to see this analysis.")
+
+    st.markdown("---")
     
     st.markdown("### Top Fundraising URLs in Coordinated Posts")
     
