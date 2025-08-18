@@ -744,6 +744,7 @@ with tab1:
         st.plotly_chart(fig_volume, use_container_width=True)
 
         st.markdown("### 📋 Raw Data Sample (First 10 Rows)")
+        st.dataframe(filtered_df_global[['account_id', 'object_id', 'URL', 'Platform', 'timestamp_share']].head(10))
 
         st.markdown("### 📊 Mentions of Tracked Phrases")
         phrase_counts = {phrase: filtered_df_global['object_id'].astype(str).str.contains(phrase, case=False).sum() for phrase in PHRASES_TO_TRACK}
