@@ -239,6 +239,8 @@ def final_preprocess_and_map_columns(df, coordination_mode="Text Content"):
     elif coordination_mode == "Shared URLs":
         df_processed = df_processed[df_processed['URL'].notna() & (df_processed['URL'].str.strip() != "")].copy()
         df_processed['original_text'] = df_processed['URL'].astype(str)
+        # Ensure 'object_id' also holds the URL for this mode
+        df_processed['object_id'] = df_processed['URL']
         
     df_processed = df_processed[df_processed['original_text'].str.strip() != ""].reset_index(drop=True)
     df_processed['Platform'] = df_processed['URL'].apply(infer_platform_from_url)
@@ -744,8 +746,15 @@ with tab1:
         st.plotly_chart(fig_volume, use_container_width=True)
 
         st.markdown("### 📋 Raw Data Sample (First 10 Rows)")
-        st.dataframe(filtered_df_global[['account_id', 'object_id', 'URL', 'Platform', 'timestamp_share']].head(10))
-
+        
+        # Corrected logic for displaying the data frame based on coordination mode
+        if coordination_mode == "Text Content":
+            display_cols = ['account_id', 'object_id', 'timestamp_share']
+            st.dataframe(filtered_df_global[display_cols].head(10), use_container_width=True)
+        else: # Shared URLs mode
+            display_cols = ['account_id', 'object_id', 'URL', 'timestamp_share']
+            st.dataframe(filtered_df_global[display_cols].head(10), use_container_width=True)
+            
         st.markdown("### 📊 Mentions of Tracked Phrases")
         phrase_counts = {phrase: filtered_df_global['object_id'].astype(str).str.contains(phrase, case=False).sum() for phrase in PHRASES_TO_TRACK}
         phrase_df = pd.DataFrame(list(phrase_counts.items()), columns=['Phrase', 'Mentions Count']).sort_values('Mentions Count', ascending=False)
