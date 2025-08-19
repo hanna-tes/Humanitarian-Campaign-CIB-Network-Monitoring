@@ -769,226 +769,311 @@ else:
 with st.spinner("Finding coordinated groups..."):
     coordinated_groups = cached_find_coordinated_groups(df_clustered, eps, max_features, time_window_minutes, data_source=st.session_state.coordination_mode)
 
+
+# ==================== TAB 1: Data Overview ====================
 with tab1:
-    st.header("📊 Data Overview")
-    st.info("This tab provides a high-level overview of the uploaded datasets, including total posts, a breakdown by platform, and the date range of the data.")
+    st.subheader("📌 Humanitarian Campaign Overview")
+    st.markdown(f"**Coordination Mode:** `{coordination_mode}` | **Total Posts (All Time):** `{len(df):,}` | **Posts After Filters:** `{len(filtered_df_global):,}`")
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Total Posts Analyzed", f"{len(df_for_analysis):,}")
-    
-    if 'timestamp_share' in df_for_analysis.columns and not df_for_analysis.empty:
-        start_date = pd.to_datetime(df_for_analysis['timestamp_share'].min(), unit='s', utc=True).strftime('%Y-%m-%d')
-        end_date = pd.to_datetime(df_for_analysis['timestamp_share'].max(), unit='s', utc=True).strftime('%Y-%m-%d')
-        col2.metric("Date Range", f"{start_date} to {end_date}")
+    if not filtered_df_global.empty:
+        st.markdown("### 📈 Post Volume Over Time")
+        filtered_df_global['date_utc'] = pd.to_datetime(filtered_df_global['timestamp_share'], unit='s', utc=True)
+        time_series_data = filtered_df_global.set_index('date_utc').resample('D').size().reset_index(name='post_count')
+        fig_volume = px.line(time_series_data, x='date_utc', y='post_count', title='Posts per Day (UTC)')
+        st.plotly_chart(fig_volume, use_container_width=True)
 
-    if 'account_id' in df_for_analysis.columns:
-        col3.metric("Total Unique Accounts", f"{df_for_analysis['account_id'].nunique():,}")
-
-    st.markdown("---")
-
-    st.subheader("Posts by Platform")
-    if 'Platform' in df_for_analysis.columns and not df_for_analysis.empty:
-        platform_counts = df_for_analysis['Platform'].value_counts().reset_index()
-        platform_counts.columns = ['Platform', 'Count']
-        fig = px.bar(
-            platform_counts,
-            x='Platform',
-            y='Count',
-            title='Distribution of Posts by Platform',
-            labels={'Platform': 'Platform', 'Count': 'Number of Posts'},
-            color='Platform'
-        )
-        st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("No platform data to display.")
-    
-with tab2:
-    st.header("📈 Coordinated Groups Analysis")
-    st.info("This tab identifies clusters of posts and users engaging in coordinated activity. A group is defined by users posting similar content or links within a specific time window.")
-
-    # Coordinated Groups
-    st.markdown("### Coordinated Groups Found")
-    
-    if coordinated_groups:
-        st.success(f"🎉 Found **{len(coordinated_groups):,}** coordinated groups.")
+        st.markdown("### 📋 Raw Data Sample (First 10 Rows)")
         
-        # Display the table of coordinated groups
-        group_summary = []
-        for i, group in enumerate(coordinated_groups):
-            first_post_time = pd.to_datetime(group['posts'][0]['Timestamp'], unit='s', utc=True)
-            last_post_time = pd.to_datetime(group['posts'][-1]['Timestamp'], unit='s', utc=True)
-            duration = last_post_time - first_post_time if len(group['posts']) > 1 else timedelta(seconds=0)
-            
-            summary = {
-                'Group ID': i + 1,
-                'Posts': group['num_posts'],
-                'Accounts': group['num_accounts'],
-                'Max Similarity Score': group['max_similarity_score'],
-                'Coordination Type': group['coordination_type'],
-                'Start Time': first_post_time.strftime('%Y-%m-%d %H:%M:%S UTC'),
-                'Duration': str(duration).split('.')[0],
-            }
-            group_summary.append(summary)
+        # Corrected logic for displaying the data frame based on coordination mode
+        if 'content_id' not in filtered_df_global.columns:
+            st.warning("`content_id` column is missing from the data. Please check your source files.")
         
-        st.dataframe(pd.DataFrame(group_summary).sort_values('Posts', ascending=False), use_container_width=True)
+        display_cols = ['account_id', 'content_id', 'object_id', 'timestamp_share']
+        if coordination_mode == "Shared URLs":
+            display_cols.append('URL')
 
-        # Detailed view of a selected group
-        st.markdown("### Detailed View of a Coordinated Group")
-        group_ids = [s['Group ID'] for s in group_summary]
-        selected_group_id = st.selectbox("Select a Group ID to view details", options=group_ids)
-        
-        if selected_group_id:
-            selected_group_index = selected_group_id - 1
-            selected_group = coordinated_groups[selected_group_index]
-            df_group_posts = pd.DataFrame(selected_group['posts']).sort_values('Timestamp')
-            df_group_posts['Timestamp'] = pd.to_datetime(df_group_posts['Timestamp'], unit='s', utc=True)
-            
-            st.markdown(f"**Group {selected_group_id} Details**")
-            st.markdown(f"- **Number of Posts:** {selected_group['num_posts']:,}")
-            st.markdown(f"- **Number of Accounts:** {selected_group['num_accounts']:,}")
-            st.markdown(f"- **Max Similarity Score:** {selected_group['max_similarity_score']:.3f}")
-            st.markdown(f"- **Coordination Type:** {selected_group['coordination_type']}")
-            st.markdown("---")
-            st.dataframe(df_group_posts[['account_id', 'Platform', 'text', 'Timestamp', 'URL']], use_container_width=True)
+        # Ensure all display_cols actually exist in filtered_df_global before trying to select them
+        existing_display_cols = [col for col in display_cols if col in filtered_df_global.columns]
+        st.dataframe(filtered_df_global[existing_display_cols].head(10), use_container_width=True)
 
-    else:
-        st.info("No coordinated groups found with the current parameters.")
-    
-    st.markdown("---")
-    st.header("🔗 Shared Link & Domain Analysis")
-    st.info("This section analyzes the external URLs shared in the social media posts to identify popular domains and key fundraising links.")
+        st.markdown("### 📊 Mentions of Tracked Phrases")
+        phrase_counts = {phrase: filtered_df_global['object_id'].astype(str).str.contains(phrase, case=False).sum() for phrase in PHRASES_TO_TRACK}
+        phrase_df = pd.DataFrame(list(phrase_counts.items()), columns=['Phrase', 'Mentions Count']).sort_values('Mentions Count', ascending=False)
+        st.dataframe(phrase_df)
 
-    # Top Shared URLs
-    st.markdown("### Top Shared URLs in Coordinated Posts")
-    if coordinated_groups:
-        top_urls = get_top_fundraising_urls(coordinated_groups)
-        if not top_urls.empty:
-            st.dataframe(top_urls, use_container_width=True)
+        st.markdown("### 📊 Top 10 Active Accounts")
+        if 'account_id' in filtered_df_global.columns and not filtered_df_global['account_id'].empty:
+            account_counts = filtered_df_global['account_id'].value_counts().reset_index()
+            account_counts.columns = ['Account ID', 'Post Count']
+            fig_accounts = px.bar(account_counts.head(10), x='Account ID', y='Post Count', title='Top 10 Active Accounts by Posts')
+            st.plotly_chart(fig_accounts, use_container_width=True)
         else:
-            st.info("No fundraising links found in coordinated posts.")
+            st.info("No 'Account ID' data available to display top active accounts.")
+
+
+# ==================== TAB 2: Analysis ====================
+with tab2:
+    st.subheader("🔎 Coordinated Activity Analysis")
+
+    if st.session_state.df_for_analysis.empty:
+        st.warning("No data available for analysis. Please adjust the filters or check your data source.")
     else:
-        st.info("Please find coordinated groups in the 'Coordination Analysis' tab first.")
-
-    # Top Domains
-    st.markdown("### Top Shared Domains")
-    if 'URL' in df_for_analysis.columns and not df_for_analysis['URL'].isnull().all():
-        df_urls = df_for_analysis[df_for_analysis['URL'].notna()].copy()
-        df_urls['Domain'] = df_urls['URL'].apply(lambda x: tldextract.extract(str(x)).domain + '.' + tldextract.extract(str(x)).suffix)
-        top_domains = df_urls['Domain'].value_counts().reset_index()
-        top_domains.columns = ['Domain', 'Count']
-        st.dataframe(top_domains, use_container_width=True)
-    else:
-        st.info("No URLs found in the data.")
-
-
-with tab3:
-    st.header("🕸️ Network Graph")
-    st.info("This graph visualizes connections between users who have participated in the same coordinated groups. Node size represents the number of connections.")
-
-    max_nodes_to_display = st.slider(
-        "Max Nodes to Display",
-        min_value=5,
-        max_value=200,
-        value=40,
-        step=5,
-        key='max_nodes',
-        help="Limits the number of most connected accounts shown in the graph to improve performance."
-    )
-    st.session_state.max_nodes_to_display = max_nodes_to_display
-
-    if not df_clustered.empty and df_clustered['account_id'].nunique() > 1:
-        with st.spinner("Building and drawing the network graph..."):
-            G, pos, cluster_map = cached_network_graph(df_clustered, coordination_type=coordination_mode, data_source=st.session_state.coordination_mode)
-
-            if G.nodes():
-                edge_weights = [G[u][v]['weight'] for u, v in G.edges()]
-                fig = go.Figure()
-
-                node_x = [pos[node][0] for node in G.nodes()]
-                node_y = [pos[node][1] for node in G.nodes()]
-                node_labels = list(G.nodes())
-                node_platforms = [G.nodes[node].get('platform', 'Unknown') for node in G.nodes()]
-                node_clusters = [cluster_map.get(node, -2) for node in G.nodes()]
-                node_degrees = [G.degree(node) for node in G.nodes()]
-
-                platform_colors = px.colors.qualitative.Plotly
-                platform_list = sorted(list(set(node_platforms)))
-                platform_color_map = {platform: platform_colors[i % len(platform_colors)] for i, platform in enumerate(platform_list)}
-                node_colors = [platform_color_map[platform] for platform in node_platforms]
-
-                node_trace = go.Scatter(
-                    x=node_x,
-                    y=node_y,
-                    mode='markers+text',
-                    marker=dict(
-                        size=[(deg + 1) * 3 for deg in node_degrees],
-                        color=node_colors,
-                        line=dict(width=1, color='DarkSlateGrey')
-                    ),
-                    text=node_labels,
-                    textposition="top center",
-                    hoverinfo='text',
-                    hovertext=[
-                        f"Account: {label}<br>Platform: {platform}<br>Connections: {degree}<br>Cluster: {cluster_id}"
-                        for label, platform, degree, cluster_id in zip(node_labels, node_platforms, node_degrees, node_clusters)
-                    ]
-                )
-
-                edge_trace = go.Scatter(
-                    x=[], y=[],
-                    line=dict(width=1, color='lightgray'),
-                    hoverinfo='none',
-                    mode='lines'
-                )
-                for edge in G.edges(data=True):
-                    x0, y0 = pos[edge[0]]
-                    x1, y1 = pos[edge[1]]
-                    edge_trace['x'] += tuple([x0, x1, None])
-                    edge_trace['y'] += tuple([y0, y1, None])
-
-                fig.add_trace(edge_trace)
-                fig.add_trace(node_trace)
-
-                fig.update_layout(
-                    title_text='Network of Coordinated Accounts',
-                    showlegend=False,
-                    hovermode='closest',
-                    margin=dict(b=20, l=5, r=5, t=40),
-                    xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                    yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)
-                )
-
-                st.plotly_chart(fig, use_container_width=True)
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.session_state.coordination_mode == "Text Content":
+                eps = st.slider("DBSCAN Epsilon (Text)", min_value=0.1, max_value=1.0, value=0.4, step=0.05,
+                                help="Lower value means stricter similarity. Recommended: 0.3-0.5.")
             else:
-                st.info("No network to display. Ensure you have at least two coordinated accounts.")
+                eps = 0.5
+        with col2:
+            if st.session_state.coordination_mode == "Text Content":
+                min_samples = st.slider("Min Samples (Text)", min_value=2, max_value=10, value=3, step=1,
+                                        help="Minimum number of posts to form a cluster.")
+            else:
+                min_samples = 2
+        with col3:
+            threshold = st.slider("Coordination Similarity Threshold", min_value=0.5, max_value=1.0, value=0.8, step=0.05,
+                                  help="Posts must have a similarity score above this to be considered coordinated.")
+
+        # Time-based coordination feature
+        time_window_minutes = st.slider("Max Time Difference (Minutes)", min_value=1, max_value=1440, value=20, step=1,
+                                        help="Only consider posts coordinated if they are published within this time window of each other.")
+
+        # max_features is now outside the if block
+        max_features = st.slider("Max TF-IDF Features", min_value=100, max_value=10000, value=3000, step=100,
+                                 help="Limits the vocabulary size for text vectorization. Helps with performance and noise reduction.")
+
+        run_analysis = st.button("Run Coordination Analysis")
+
+        # Store analysis parameters in session state for other tabs to use
+        st.session_state.eps = eps
+        st.session_state.min_samples = min_samples
+        st.session_state.threshold = threshold
+        st.session_state.time_window_minutes = time_window_minutes
+        st.session_state.max_features = max_features
+
+        if 'coordinated_groups' not in st.session_state:
+            st.session_state.coordinated_groups = []
+
+        if run_analysis:
+            with st.spinner("⏳ Running analysis..."):
+                if st.session_state.coordination_mode == "Text Content":
+                    df_clustered = cached_clustering(
+                        st.session_state.df_for_analysis,
+                        st.session_state.eps,
+                        st.session_state.min_samples,
+                        st.session_state.max_features,
+                        data_source=f"clustering_{st.session_state.coordination_mode}_{len(st.session_state.df_for_analysis)}_{st.session_state.eps}_{st.session_state.min_samples}_{st.session_state.max_features}"
+                    )
+                else: # No clustering needed for URL mode
+                    df_clustered = st.session_state.df_for_analysis.copy()
+                    df_clustered['cluster'] = df_clustered['URL'].apply(lambda x: hash(x) % 1000 if pd.notna(x) else -1)
+
+
+                if df_clustered is not None and 'original_text' in df_clustered.columns:
+                    coordinated_groups = cached_find_coordinated_groups(
+                        df_clustered,
+                        st.session_state.threshold,
+                        st.session_state.max_features,
+                        st.session_state.time_window_minutes,
+                        data_source=f"find_groups_{st.session_state.coordination_mode}_{len(st.session_state.df_for_analysis)}_{st.session_state.threshold}_{st.session_state.max_features}_{st.session_state.time_window_minutes}"
+                    )
+                    st.session_state.coordinated_groups = coordinated_groups
+
+                    st.markdown("### 📈 Coordination Summary")
+                    total_coordinated_posts = sum(g['num_posts'] for g in coordinated_groups)
+                    total_coordinated_accounts = sum(len(pd.DataFrame(g['posts'])['account_id'].unique()) for g in coordinated_groups)
+
+                    col_met1, col_met2, col_met3 = st.columns(3)
+                    with col_met1:
+                        st.metric("Coordinated Groups Found", len(coordinated_groups), help="Total number of unique coordinated groups identified.")
+                    with col_met2:
+                        st.metric("Posts in Groups", total_coordinated_posts, help="Total number of posts that are part of a coordinated group.")
+                    with col_met3:
+                        st.metric("Accounts in Groups", total_coordinated_accounts, help="Total number of unique accounts participating in coordinated groups.")
+
+                    st.info(f"✨ Found **{len(coordinated_groups):,}** coordinated groups with a total of **{total_coordinated_posts:,}** posts from **{total_coordinated_accounts:,}** unique accounts.")
+
+                    if coordinated_groups:
+                        st.markdown("### 📊 Top 10 Coordinated Groups")
+
+                        top_groups = sorted(coordinated_groups, key=lambda x: x['num_posts'], reverse=True)[:10]
+
+                        for i, group in enumerate(top_groups):
+                            with st.expander(f"Group {i+1}: {group['num_posts']} Posts ({group['coordination_type']}) - Max Sim: {group['max_similarity_score']}"):
+                                group_df = pd.DataFrame(group['posts'])
+                                group_df['Timestamp'] = pd.to_datetime(group_df['Timestamp'], unit='s', utc=True)
+
+                                # Scatter plot for granular post timeline
+                                fig_timeline = px.scatter(
+                                    group_df,
+                                    x='Timestamp',
+                                    y='account_id',
+                                    color='Platform',
+                                    hover_data=['text', 'URL'],
+                                    title="Individual Posts Over Time for this Group"
+                                )
+                                fig_timeline.update_layout(xaxis_title="Time (UTC)", yaxis_title="Account ID")
+                                st.plotly_chart(fig_timeline, use_container_width=True, key=f"group_scatter_{i}")
+
+                                st.markdown("##### Raw Data Sample for this Group")
+                                st.dataframe(group_df[['account_id', 'text', 'URL', 'Platform', 'Timestamp']].head(10), use_container_width=True)
+                    else:
+                        st.info("No coordinated groups found with the current parameters.")
+                else:
+                    st.error("Clustering failed. Please check your data or parameters.")
+
+# ==================== TAB 3: Network Graph ====================
+with tab3:
+    st.subheader("🌐 Network Graph")
+
+    st.markdown("""
+        The network graph visualizes coordinated activity among accounts.
+        - **Nodes** (circles) represent individual accounts.
+        - **Edges** (lines) connect accounts that have engaged in coordinated activity, meaning they have either posted very similar content or shared the same URL.
+        - **Node Size and Color** are based on the number of connections an account has within the network. Larger and darker nodes indicate a **higher degree of centrality**, suggesting these accounts are more involved in coordinating with others.
+    """)
+
+    if st.session_state.df_for_analysis.empty:
+        st.warning("No data available for network analysis. Please adjust the filters or check your data source.")
     else:
-        st.info("Not enough data to build a network graph. Please check your file uploads and filters.")
+        st.markdown("#### ⚙️ Network Graph Parameters")
+        col1, col2, col3 = st.columns([1, 1, 2])
+        with col1:
+            network_mode = st.radio(
+                "Network Based On:",
+                ("Similar Content", "Shared URLs"),
+                key="network_mode",
+                help="Build the network based on who posts similar content or who shares the same URLs."
+            )
+        with col2:
+            st.session_state.max_nodes_to_display = st.slider(
+                "Max Nodes to Display",
+                min_value=10, max_value=200, value=40, step=10,
+                key="max_nodes",
+                help="Limits the number of nodes (accounts) shown in the graph for performance."
+            )
+        with col3:
+            label_size = st.slider("Account ID Label Size", min_value=5, max_value=20, value=10, step=1)
+            phrase_to_filter = st.selectbox(
+                "Filter Network by Phrase",
+                options=["All"] + list(PHRASES_TO_TRACK),
+                key="phrase_filter",
+                help="Focus the network graph on a specific campaign narrative."
+            )
+
+        run_network = st.button("Generate Network Graph")
+
+        if run_network:
+            with st.spinner("⏳ Generating network graph..."):
+                df_for_graph_filtered = st.session_state.df_for_analysis.copy()
+                if phrase_to_filter != "All":
+                    df_for_graph_filtered = df_for_graph_filtered[df_for_graph_filtered['object_id'].str.contains(phrase_to_filter, case=False, na=False)]
+
+                if df_for_graph_filtered.empty:
+                    st.warning(f"No posts found for the selected phrase: '{phrase_to_filter}'. Please try a different filter.")
+                else:
+                    if network_mode == "Similar Content":
+                        df_clustered_for_network = cached_clustering(df_for_graph_filtered, eps=st.session_state.get('eps', 0.4), min_samples=st.session_state.get('min_samples', 3), max_features=st.session_state.get('max_features', 5000))
+                        graph, pos, cluster_map = cached_network_graph(df_clustered_for_network, coordination_type="Text Content", data_source="uploaded_data")
+                    else: # Shared URLs
+                        graph, pos, cluster_map = cached_network_graph(df_for_graph_filtered, coordination_type="Shared URLs", data_source="uploaded_data")
+
+                    if graph.number_of_nodes() > 0:
+                        edge_x = []
+                        edge_y = []
+                        for edge in graph.edges():
+                            x0, y0 = pos[edge[0]]
+                            x1, y1 = pos[edge[1]]
+                            edge_x.append(x0)
+                            edge_x.append(x1)
+                            edge_x.append(None)
+                            edge_y.append(y0)
+                            edge_y.append(y1)
+                            edge_y.append(None)
+
+                        edge_trace = go.Scatter(
+                            x=edge_x, y=edge_y,
+                            line=dict(width=0.5, color='#888'),
+                            hoverinfo='none',
+                            mode='lines'
+                        )
+
+                        node_x = []
+                        node_y = []
+                        for node in graph.nodes():
+                            x, y = pos[node]
+                            node_x.append(x)
+                            node_y.append(y)
+
+                        node_adjacencies = [len(list(graph.adj[node])) for node in graph.nodes()]
+                        node_text = list(graph.nodes())
+
+                        node_trace = go.Scatter(
+                            x=node_x, y=node_y,
+                            mode='markers+text',
+                            text=node_text,
+                            textposition="bottom center",
+                            textfont=dict(size=label_size, color='black'),
+                            hoverinfo='text',
+                            marker=dict(
+                                showscale=True,
+                                colorscale='Viridis',
+                                reversescale=True,
+                                color=node_adjacencies,
+                                size=10,
+                                colorbar=dict(
+                                    thickness=15,
+                                    title='Node Centrality',
+                                    xanchor='left',
+                                ),
+                                line_width=2
+                            )
+                        )
+
+                        hover_text = []
+                        for node, adjacencies in enumerate(graph.adjacency()):
+                            hover_text.append(f'Account: {list(graph.nodes())[node]}<br># of connections: {len(adjacencies[1])}')
+
+                        node_trace.hovertext = hover_text
+                        node_trace.hoverinfo = 'text'
+
+                        fig = go.Figure(data=[edge_trace, node_trace],
+                                        layout=go.Layout(
+                                            title=dict(
+                                                text='<br>Network of Coordinated Accounts',
+                                                font_size=16
+                                            ),
+                                            showlegend=False,
+                                            hovermode='closest',
+                                            margin=dict(b=20, l=5, r=5, t=40),
+                                            annotations=[dict(
+                                                showarrow=False,
+                                                text="Nodes represent accounts. Links show coordinated activity.",
+                                                xref="paper", yref="paper",
+                                                x=0.005, y=-0.002)],
+                                            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                                            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False))
+                                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.warning("The network graph could not be generated. There may not be enough coordinated activity to form a network with the current filters.")
+        else:
+            st.info("Click the 'Generate Network Graph' button to visualize the network.")
 
 
+# ==================== TAB 4: Fundraising & Risk Analysis ====================
 with tab4:
     st.header("💰 Fundraising & Risk Analysis")
     st.info("This tab provides insights into key phrases, accounts involved in multiple campaigns, and an overview of fundraising efforts from the dedicated CSV.")
     
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("Top 6 Phrases by Volume")
-        df_for_phrases = st.session_state.df_for_analysis
-        if not df_for_phrases.empty:
-            phrase_counts = {phrase: df_for_phrases['object_id'].str.contains(phrase, case=False, na=False).sum() for phrase in PHRASES_TO_TRACK}
-            df_phrases = pd.DataFrame(phrase_counts.items(), columns=['Phrase', 'Count']).sort_values('Count', ascending=False)
-            st.dataframe(df_phrases, use_container_width=True)
+    st.subheader("Accounts in Multiple Campaigns")
+    with st.spinner("Finding multi-campaign accounts..."):
+        multi_campaign_df = get_account_campaign_involvement(df_clustered, eps, max_features, time_window_minutes)
+        if not multi_campaign_df.empty:
+            st.dataframe(multi_campaign_df, use_container_width=True)
         else:
-            st.info("No data to count phrases.")
-
-    with col2:
-        st.subheader("Accounts in Multiple Campaigns")
-        with st.spinner("Finding multi-campaign accounts..."):
-            multi_campaign_df = get_account_campaign_involvement(df_clustered, eps, max_features, time_window_minutes)
-            if not multi_campaign_df.empty:
-                st.dataframe(multi_campaign_df, use_container_width=True)
-            else:
-                st.info("No accounts were found to be involved in multiple campaigns.")
+            st.info("No accounts were found to be involved in multiple campaigns.")
     
     st.markdown("---")
     st.markdown("### Fundraising Campaign Insights")
@@ -1004,20 +1089,30 @@ with tab4:
         col_1.metric("Total Campaigns", total_campaigns)
         col_2.metric("Total Amount Raised", f"${total_raised:,.2f}")
         col_3.metric("Total Target Amount", f"${total_target:,.2f}")
+        
 
         # Top campaigns by amount raised
         st.markdown("#### Top 10 Campaigns by Amount Raised")
         top_raised = fundraising_df.sort_values('amount_raised', ascending=False).head(10).reset_index(drop=True)
-        st.dataframe(top_raised[['title', 'donation_link', 'amount_raised', 'target_amount']], use_container_width=True)
+        st.dataframe(top_raised[['title','creator','donation_link', 'amount_raised', 'target_amount']], use_container_width=True)
 
         # Campaigns by Platform/Domain
         st.markdown("#### Campaigns by Platform/Domain")
-        fundraising_df['domain'] = fundraising_df['donation_link'].apply(lambda x: tldextract.extract(x).domain if pd.notna(x) else 'Unknown')
+        fundraising_df['domain'] = fundraising_df['donation_link'].apply(lambda x: tldextract.extract(x).domain + '.' + tldextract.extract(x).suffix if pd.notna(x) else 'Unknown')
         domain_counts = fundraising_df.groupby('domain').agg(
             campaigns=('donation_link', 'size'),
             total_raised=('amount_raised', 'sum')
         ).sort_values('campaigns', ascending=False).reset_index()
         st.dataframe(domain_counts, use_container_width=True)
+
+        st.markdown("#### Top Campaigns by Location")
+        if 'location' in fundraising_df.columns and not fundraising_df['location'].isnull().all():
+            location_counts = fundraising_df['location'].value_counts().reset_index()
+            location_counts.columns = ['Location', 'Campaign Count']
+            fig_locations = px.bar(location_counts.head(10), x='Location', y='Campaign Count', title='Top 10 Locations by Campaign Count')
+            st.plotly_chart(fig_locations, use_container_width=True)
+        else:
+            st.info("No location data available to display top locations.")
 
     else:
         st.warning("Please upload a fundraising links CSV file in the sidebar to see insights.")
