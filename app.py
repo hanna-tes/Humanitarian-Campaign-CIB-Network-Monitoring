@@ -1071,7 +1071,7 @@ with tab4:
     with st.spinner("Finding multi-campaign accounts..."):
         multi_campaign_df = get_account_campaign_involvement(df_clustered, eps, max_features, time_window_minutes)
         if not multi_campaign_df.empty:
-            st.dataframe(multi_campaign_df, use_container_width=True)
+            st.dataframe(multi_campaign_df, width=1000, use_container_width=False)
         else:
             st.info("No accounts were found to be involved in multiple campaigns.")
     
